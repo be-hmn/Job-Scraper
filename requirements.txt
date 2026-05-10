@@ -1,0 +1,8 @@
+requests==2.31.0
+beautifulsoup4==4.12.3
+selenium==4.20.0
+webdriver-manager==4.0.1
+pandas==2.2.2
+lxml==5.2.1
+fake-useragent==1.5.1
+python-dotenv==1.0.1
