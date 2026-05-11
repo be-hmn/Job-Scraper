@@ -30,16 +30,49 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 def deduplicate(jobs: List[Dict]) -> List[Dict]:
     """
-    (title, company) 기준으로 중복 제거.
+    중복 제거 전략 (우선순위 순):
+      1) (title, company) 둘 다 있으면 해당 조합으로 중복 판단
+      2) company가 비어있으면 url 기준으로 중복 판단
+      3) url도 없으면 title만으로 판단 (느슨한 기준)
+
     같은 공고가 여러 사이트에 올라온 경우 첫 번째 항목만 유지.
     """
-    seen = set()
-    unique = []
+    seen_title_company: set = set()
+    seen_url: set = set()
+    unique: List[Dict] = []
+
     for job in jobs:
-        key = (job.get("title", "").strip(), job.get("company", "").strip())
-        if key not in seen and key != ("", ""):
-            seen.add(key)
-            unique.append(job)
+        title   = job.get("title", "").strip()
+        company = job.get("company", "").strip()
+        url     = job.get("url", "").strip()
+
+        if not title:
+            continue  # 제목 없는 항목은 무조건 제외
+
+        if company:
+            # 전략 1: (title, company) 조합
+            key = (title, company)
+            if key in seen_title_company:
+                continue
+            seen_title_company.add(key)
+            if url:
+                seen_url.add(url)
+        elif url:
+            # 전략 2: URL 기준 (company nan인 사이트 대응)
+            if url in seen_url:
+                continue
+            seen_url.add(url)
+            # title만으로도 seen에 추가해 다른 사이트 중복 방지
+            seen_title_company.add((title, ""))
+        else:
+            # 전략 3: title만
+            key = (title, "")
+            if key in seen_title_company:
+                continue
+            seen_title_company.add(key)
+
+        unique.append(job)
+
     return unique
 
 
@@ -62,7 +95,6 @@ def save_csv(jobs: List[Dict], filename: str = None) -> str:
         "deadline", "url", "source", "keyword",
     ])
 
-    # 컬럼 한글 헤더로 변환
     df.rename(columns={
         "title":      "공고제목",
         "company":    "회사명",
@@ -74,7 +106,7 @@ def save_csv(jobs: List[Dict], filename: str = None) -> str:
         "keyword":    "검색키워드",
     }, inplace=True)
 
-    df.to_csv(path, index=False, encoding="utf-8-sig")  # utf-8-sig → Excel 한글 깨짐 방지
+    df.to_csv(path, index=False, encoding="utf-8-sig")
     return path
 
 

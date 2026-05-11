@@ -1,6 +1,6 @@
 """
 IT/보안 채용 공고 대시보드
-실행: streamlit run dashboard/app.py
+실행: python -m streamlit run dashboard/app.py
 """
 
 import os
@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-# Job_Scraper 루트를 경로에 추가
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -44,11 +43,23 @@ st.markdown("""
 .badge-exp    { background:#313244; color:#a6e3a1; }
 .badge-loc    { background:#313244; color:#fab387; }
 .badge-score  { background:#1e3a5f; color:#89dceb; }
+.badge-tech   { background:#2a2a3e; color:#f9e2af; }
 .score-bar  { height:4px; border-radius:2px; background:#313244; margin-top:8px; }
 .score-fill { height:4px; border-radius:2px;
               background:linear-gradient(90deg,#89b4fa,#cba6f7); }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── NaN 정규화 헬퍼 ──────────────────────────────────────────────
+def _clean(val) -> str:
+    import math
+    if val is None:
+        return ""
+    if isinstance(val, float) and math.isnan(val):
+        return ""
+    s = str(val).strip()
+    return "" if s.lower() == "nan" else s
 
 
 # ── 공고 카드 렌더링 ─────────────────────────────────────────────
@@ -58,14 +69,26 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
         return
 
     for _, row in df.iterrows():
-        # 각 조각을 문자열로 먼저 완성한 뒤 join → f-string 이스케이프 방지
-        title    = str(row.get("공고제목", "") or "")
-        company  = str(row.get("회사명", "") or "")
-        source   = str(row.get("출처", "") or "")
-        loc      = str(row.get("근무지", "") or "")
-        exp      = str(row.get("경력", "") or "") or "미기재"
-        deadline = str(row.get("마감일", "") or "")
-        url      = str(row.get("공고URL", "") or "")
+        title    = _clean(row.get("공고제목", ""))
+        company  = _clean(row.get("회사명", ""))
+        source   = _clean(row.get("출처", ""))
+        loc      = _clean(row.get("근무지", ""))
+        exp      = _clean(row.get("경력", "")) or "미기재"
+        deadline = _clean(row.get("마감일", ""))
+        url      = _clean(row.get("공고URL", ""))
+
+        # 기술 스택 배지 (파이프라인 처리 후)
+        tech_list = row.get("tech_stack", [])
+        if isinstance(tech_list, str):
+            import ast
+            try:
+                tech_list = ast.literal_eval(tech_list)
+            except Exception:
+                tech_list = []
+        tech_badges = "".join(
+            f'<span class="badge badge-tech">{t}</span>'
+            for t in (tech_list[:5] if isinstance(tech_list, list) else [])
+        )
 
         deadline_part = f'&nbsp;📅 {deadline}' if deadline else ""
         link_part = (
@@ -84,7 +107,6 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
                 f'</div>'
             )
 
-        # 모든 조각을 하나의 문자열로 조립
         card = (
             '<div class="job-card">'
             f'<div class="job-title">{title}</div>'
@@ -95,6 +117,7 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
             f'<span class="badge badge-exp">💼 {exp}</span>'
             f'{deadline_part}'
             '</div>'
+            f'{tech_badges}'
             f'{score_part}'
             f'<div style="margin-top:8px">{link_part}</div>'
             '</div>'
@@ -131,6 +154,14 @@ with st.sidebar:
         format_func=lambda x: os.path.basename(x),
     )
 
+    # 파이프라인 처리 여부 표시
+    df_raw = load_data(selected_file)
+    is_cleaned = "uid" in df_raw.columns
+    if is_cleaned:
+        st.success("✅ 파이프라인 처리 완료 (Fuzzy 중복제거 · 기술스택 추출)", icon="🧹")
+    else:
+        st.info("💡 `python pipeline.py` 실행 시 Fuzzy 중복제거 및 기술스택 추출이 적용됩니다.", icon="ℹ️")
+
     st.divider()
 
     # 검색 엔진 선택
@@ -153,7 +184,6 @@ with st.sidebar:
 
     # 필터
     st.markdown("**🔍 필터**")
-    df_raw = load_data(selected_file)
 
     sources = st.multiselect(
         "출처 사이트",
@@ -177,6 +207,21 @@ with st.sidebar:
         "경력",
         ["전체", "신입", "1~3년", "3~5년", "5년 이상"],
     )
+
+    # 기술 스택 필터 (파이프라인 처리 후에만 표시)
+    tech_filter = []
+    if is_cleaned and "tech_stack" in df_raw.columns:
+        from collections import Counter
+        import ast as _ast
+        all_techs: Counter = Counter()
+        df_raw["tech_stack"].dropna().apply(
+            lambda x: all_techs.update(
+                _ast.literal_eval(x) if isinstance(x, str) else x
+            ) if x else None
+        )
+        top_techs = [t for t, _ in all_techs.most_common(30)]
+        if top_techs:
+            tech_filter = st.multiselect("🛠 기술 스택", top_techs, default=[])
 
     st.divider()
     top_k = st.slider("최대 결과 수", 5, 100, 20, 5)
@@ -203,7 +248,6 @@ with tab_search:
         "예: *정보보안 관련 최신 문제를 해결해보는 경험을 해보고 싶어*"
     )
 
-    # 예시 쿼리 버튼
     EXAMPLES = [
         "정보보안 관련 최신 문제를 해결해보는 경험을 해보고 싶어",
         "클라우드 인프라를 직접 설계하고 운영해보고 싶어",
@@ -215,18 +259,17 @@ with tab_search:
     st.markdown("**💡 예시 쿼리**")
     ex_cols = st.columns(len(EXAMPLES))
 
-    # session_state 초기화
     if "query_text" not in st.session_state:
         st.session_state.query_text = ""
 
     for i, ex in enumerate(EXAMPLES):
         if ex_cols[i].button(ex[:16] + "…", key=f"ex_{i}", use_container_width=True):
             st.session_state.query_text = ex
-            st.rerun()  # 버튼 클릭 즉시 재실행 → text_area에 반영
+            st.rerun()
 
     query = st.text_area(
         "검색 쿼리",
-        value=st.session_state.query_text,  # key 없이 value만 사용
+        value=st.session_state.query_text,
         height=80,
         placeholder="원하는 업무 경험, 기술 스택, 관심 분야를 자유롭게 입력하세요...",
         label_visibility="collapsed",
@@ -247,6 +290,7 @@ with tab_search:
                         sources=sources if sources else None,
                         locations=locations if locations else None,
                         experience=experience,
+                        tech_stack=tech_filter if tech_filter else None,
                         top_k=top_k,
                     )
                 else:
@@ -274,6 +318,7 @@ with tab_filter:
             sources=sources if sources else None,
             locations=locations if locations else None,
             experience=experience,
+            tech_stack=tech_filter if tech_filter else None,
         )
         st.success(f"**{len(results_f)}개** 공고를 찾았습니다.")
         render_job_cards(results_f.head(top_k), show_score=False)
@@ -283,6 +328,7 @@ with tab_filter:
             sources=sources if sources else None,
             locations=locations if locations else None,
             experience=experience,
+            tech_stack=tech_filter if tech_filter else None,
         )
         st.caption(f"전체 {len(default_f)}개 공고 (최대 {top_k}개 표시)")
         render_job_cards(default_f.head(top_k), show_score=False)
@@ -295,10 +341,10 @@ with tab_stats:
     st.markdown("### 📊 수집 데이터 통계")
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("총 공고 수",    f"{stats['total']:,}건")
-    m2.metric("수집 사이트",   f"{len(stats['by_source'])}개")
+    m1.metric("총 공고 수",       f"{stats['total']:,}건")
+    m2.metric("수집 사이트",      f"{len(stats['by_source'])}개")
     m3.metric("마감일 있는 공고", f"{stats['deadline_soon']}건")
-    m4.metric("근무지 종류",   f"{len(stats['by_location'])}개")
+    m4.metric("근무지 종류",      f"{len(stats['by_location'])}개")
 
     st.divider()
     col1, col2 = st.columns(2)
@@ -329,20 +375,55 @@ with tab_stats:
         fig2.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("**근무지 TOP 10**")
-    loc_df = pd.DataFrame(
-        stats["by_location"].items(), columns=["근무지", "건수"]
-    )
-    fig3 = px.pie(
-        loc_df, names="근무지", values="건수",
-        template="plotly_dark", hole=0.4,
-    )
-    fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig3, use_container_width=True)
+    # 기술 스택 TOP 15 (파이프라인 처리 후)
+    if "top_tech" in stats and stats["top_tech"]:
+        st.markdown("**🛠 기술 스택 TOP 15**")
+        tech_df = pd.DataFrame(
+            stats["top_tech"].items(), columns=["기술", "건수"]
+        ).sort_values("건수", ascending=True)
+        fig_tech = px.bar(
+            tech_df, x="건수", y="기술", orientation="h",
+            color="건수", color_continuous_scale="Greens",
+            template="plotly_dark",
+        )
+        fig_tech.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig_tech, use_container_width=True)
+
+    col3, col4 = st.columns(2)
+    with col3:
+        st.markdown("**근무지 TOP 10**")
+        loc_df = pd.DataFrame(
+            stats["by_location"].items(), columns=["근무지", "건수"]
+        )
+        fig3 = px.pie(
+            loc_df, names="근무지", values="건수",
+            template="plotly_dark", hole=0.4,
+        )
+        fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # 경력 분포 (파이프라인 처리 후)
+    with col4:
+        if "exp_dist" in stats and stats["exp_dist"]:
+            st.markdown("**💼 경력 분포 (min_exp 기준)**")
+            exp_df = pd.DataFrame(
+                [(str(k) + "년", v) for k, v in sorted(stats["exp_dist"].items())
+                 if k is not None and k >= 0],
+                columns=["경력", "건수"],
+            )
+            if not exp_df.empty:
+                fig4 = px.bar(
+                    exp_df, x="경력", y="건수",
+                    color="건수", color_continuous_scale="Oranges",
+                    template="plotly_dark",
+                )
+                fig4.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig4, use_container_width=True)
 
     st.divider()
     st.markdown("**전체 데이터 테이블**")
-    display_df = df_raw.drop(columns=["_search_text"], errors="ignore")
+    display_cols = [c for c in df_raw.columns if c not in ("_search_text", "uid")]
+    display_df = df_raw[display_cols]
     st.dataframe(
         display_df,
         use_container_width=True,

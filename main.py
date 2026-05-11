@@ -10,27 +10,36 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
 from scrapers.saramin     import SaraminScraper
-from scrapers.jobkorea    import JobKoreaScraper
-from scrapers.wanted      import WantedScraper
-from scrapers.jumpit      import JumpitScraper
-from scrapers.programmers import ProgrammersScraper
-from scrapers.rocketpunch import RocketpunchScraper
-from scrapers.incruit     import IncruitScraper
-from scrapers.jobplanet   import JobplanetScraper
+from scrapers.jobkorea   import JobKoreaScraper
+from scrapers.wanted     import WantedScraper
+from scrapers.jumpit     import JumpitScraper
+from scrapers.linkedin   import LinkedInScraper
+from scrapers.jobplanet  import JobplanetScraper
+from scrapers.kakao      import KakaoScraper
+from scrapers.naver      import NaverScraper
+from scrapers.toss       import TossScraper
+from scrapers.coupang    import CoupangScraper
+from scrapers.rallit     import RallitScraper
 from utils import setup_logging, deduplicate, save_csv, print_summary
 
 logger = logging.getLogger(__name__)
 
 # 사용 가능한 스크래퍼 목록
 ALL_SCRAPERS = {
-    "사람인":     SaraminScraper,
-    "잡코리아":   JobKoreaScraper,
-    "원티드":     WantedScraper,
-    "점핏":       JumpitScraper,
-    "링크드인":     ProgrammersScraper,
-    "로켓펀치":   RocketpunchScraper,
-    "인크루트":   IncruitScraper,
-    "잡플래닛":   JobplanetScraper,
+    # ── 종합 채용 플랫폼 ──────────────────────────────────────
+    "사람인":   SaraminScraper,
+    "잡코리아": JobKoreaScraper,
+    "원티드":   WantedScraper,
+    "점핏":     JumpitScraper,
+    "잡플래닛": JobplanetScraper,
+    # ── 개발자 특화 플랫폼 ────────────────────────────────────
+    "링크드인": LinkedInScraper,
+    "랠릿":     RallitScraper,
+    # ── 대기업 직접 채용 ──────────────────────────────────────
+    "카카오":   KakaoScraper,
+    "네이버":   NaverScraper,
+    "토스":     TossScraper,
+    "쿠팡":     CoupangScraper,
 }
 
 

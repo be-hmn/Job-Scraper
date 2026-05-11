@@ -6,3 +6,4 @@ pandas==2.2.2
 lxml==5.2.1
 fake-useragent==1.5.1
 python-dotenv==1.0.1
+rapidfuzz==3.9.7

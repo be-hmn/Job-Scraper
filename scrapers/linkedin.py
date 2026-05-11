@@ -1,18 +1,19 @@
 """
 링크드인 코리아 스크래퍼
-  - LinkedIn Jobs API (비공개 내부 API)
+  - LinkedIn Jobs 비공개 API (guest endpoint)
   - IT/보안 관련 키워드로 한국 채용 공고 수집
 """
 
 import logging
 from typing import List, Dict
 
+from bs4 import BeautifulSoup
+
 from config import MAX_PAGES
 from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-# LinkedIn 비공개 Jobs API
 API_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 
 SEARCH_QUERIES = {
@@ -25,8 +26,8 @@ SEARCH_QUERIES = {
 }
 
 
-class ProgrammersScraper(BaseScraper):
-    """링크드인 코리아 채용 스크래퍼 (클래스명 유지로 main.py 호환)"""
+class LinkedInScraper(BaseScraper):
+    """링크드인 코리아 채용 스크래퍼"""
 
     site_name = "링크드인"
 
@@ -40,18 +41,16 @@ class ProgrammersScraper(BaseScraper):
                     "location": "South Korea",
                     "start": page * 25,
                     "count": 25,
-                    "f_TPR": "r604800",   # 최근 1주일
+                    "f_TPR": "r604800",  # 최근 1주일
                 }
-                headers_extra = {
+                resp = self.get(API_URL, params=params, headers={
                     "Referer": "https://www.linkedin.com/jobs/search/",
                     "Accept": "application/json, text/html",
                     "X-Requested-With": "XMLHttpRequest",
-                }
-                resp = self.get(API_URL, params=params, headers=headers_extra)
+                })
                 if resp is None:
                     break
 
-                from bs4 import BeautifulSoup
                 soup = BeautifulSoup(resp.text, "lxml")
                 items = soup.select("li")
 
@@ -70,22 +69,14 @@ class ProgrammersScraper(BaseScraper):
                     url     = link_tag["href"].split("?")[0] if link_tag and link_tag.has_attr("href") else ""
 
                     if title:
-                        jobs.append(
-                            self._make_job(
-                                title=title,
-                                company=company,
-                                location=loc,
-                                experience="",
-                                deadline=deadline,
-                                url=url,
-                                keyword=label,
-                            )
-                        )
+                        jobs.append(self._make_job(
+                            title=title, company=company, location=loc,
+                            experience="", deadline=deadline,
+                            url=url, keyword=label,
+                        ))
                         fetched += 1
 
-                logger.info(
-                    "[링크드인] '%s' 페이지 %d → %d건 누적", label, page + 1, len(jobs)
-                )
+                logger.info("[링크드인] '%s' 페이지 %d → %d건 누적", label, page + 1, len(jobs))
 
                 if fetched < 25:
                     break
