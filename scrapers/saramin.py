@@ -24,8 +24,10 @@ logger = logging.getLogger(__name__)
 class SaraminScraper(BaseScraper):
     site_name = "사람인"
 
-    # IT개발(84), 보안·경호(86)
+    # IT개발(84), 보안·경호(86), 인턴(87 = 인턴·파견·아르바이트 중 IT 인턴)
+    # 사람인 고용형태 파라미터: employment_tp_cd=5 (인턴)
     CATEGORY_CODES = ["84", "86"]
+    INTERN_CATEGORY = "84"  # IT개발 카테고리에서 인턴 고용형태 필터
 
     def scrape(self) -> List[Dict]:
         if SARAMIN_API_KEY:
@@ -75,7 +77,15 @@ class SaraminScraper(BaseScraper):
         jobs: List[Dict] = []
         base_url = "https://www.saramin.co.kr/zf_user/jobs/list/job-category"
 
-        for cat in self.CATEGORY_CODES:
+        # (카테고리 코드, 고용형태 코드, 레이블)
+        # employment_tp_cd: 1=정규직, 2=계약직, 3=파견직, 4=프리랜서, 5=인턴, 6=아르바이트
+        targets = [
+            ("84", None, None),   # IT개발 전체
+            ("86", None, None),   # 보안 전체
+            ("84", "5",  "인턴"), # IT개발 인턴만
+        ]
+
+        for cat, emp_tp, emp_label in targets:
             for page in range(1, MAX_PAGES + 1):
                 params = {
                     "cat_kewd": cat,
@@ -85,6 +95,9 @@ class SaraminScraper(BaseScraper):
                     "search_done": "y",
                     "panel_count": "y",
                 }
+                if emp_tp:
+                    params["employment_tp_cd"] = emp_tp
+
                 resp = self.get(base_url, params=params)
                 if resp is None:
                     break
@@ -95,24 +108,19 @@ class SaraminScraper(BaseScraper):
                     break
 
                 for item in items:
-                    # 공고 제목 + URL
-                    title_tag = item.select_one("div.job_tit a.str_tit")
-                    # 회사명
-                    company_tag = item.select_one("div.company_nm a.str_tit")
-                    # 근무지
-                    loc_tag = item.select_one("p.work_place")
-                    # 경력
-                    exp_tag = item.select_one("p.career")
-                    # 직무 태그
-                    sector_tags = item.select("div.job_meta span.job_sector span")
-                    # 마감일
+                    title_tag    = item.select_one("div.job_tit a.str_tit")
+                    company_tag  = item.select_one("div.company_nm a.str_tit")
+                    loc_tag      = item.select_one("p.work_place")
+                    exp_tag      = item.select_one("p.career")
+                    sector_tags  = item.select("div.job_meta span.job_sector span")
                     deadline_tag = item.select_one("span.date")
 
                     title    = title_tag.get_text(strip=True) if title_tag else ""
                     company  = company_tag.get_text(strip=True) if company_tag else ""
                     loc      = loc_tag.get_text(strip=True) if loc_tag else ""
                     exp      = exp_tag.get_text(strip=True) if exp_tag else ""
-                    keyword  = ", ".join(t.get_text(strip=True) for t in sector_tags[:3]) if sector_tags else f"cat_{cat}"
+                    kw_base  = ", ".join(t.get_text(strip=True) for t in sector_tags[:3]) if sector_tags else f"cat_{cat}"
+                    keyword  = f"{kw_base} (인턴)" if emp_label else kw_base
                     deadline = deadline_tag.get_text(strip=True) if deadline_tag else ""
 
                     href = title_tag["href"] if title_tag and title_tag.has_attr("href") else ""
@@ -120,14 +128,11 @@ class SaraminScraper(BaseScraper):
 
                     if title:
                         jobs.append(self._make_job(
-                            title=title,
-                            company=company,
-                            location=loc,
-                            experience=exp,
-                            deadline=deadline,
-                            url=url,
-                            keyword=keyword,
+                            title=title, company=company, location=loc,
+                            experience=exp, deadline=deadline,
+                            url=url, keyword=keyword,
                         ))
 
-                logger.info("[사람인 HTML] 카테고리 %s, 페이지 %d → %d건 누적", cat, page, len(jobs))
+                label_str = f"카테고리 {cat}" + (f" [{emp_label}]" if emp_label else "")
+                logger.info("[사람인 HTML] %s, 페이지 %d → %d건 누적", label_str, page, len(jobs))
         return jobs

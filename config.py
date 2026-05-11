@@ -11,7 +11,7 @@ load_dotenv()
 SARAMIN_API_KEY = os.getenv("SARAMIN_API_KEY", "")
 SARAMIN_API_URL = "https://oapi.saramin.co.kr/job-search"
 
-# IT/보안 관련 검색 키워드
+# IT/보안 관련 검색 키워드 (사람인 Open API용)
 IT_SECURITY_KEYWORDS = [
     "보안",
     "정보보안",
@@ -33,6 +33,10 @@ IT_SECURITY_KEYWORDS = [
     "DevOps",
     "SRE",
     "AI엔지니어",
+    # 인턴십
+    "개발인턴",
+    "보안인턴",
+    "IT인턴",
 ]
 
 # ── 크롤링 공통 설정 ─────────────────────────────────────────────

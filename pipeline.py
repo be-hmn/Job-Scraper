@@ -210,9 +210,10 @@ def fuzzy_deduplicate(df: pd.DataFrame, threshold: int = FUZZY_THRESHOLD) -> pd.
     (회사명 + 공고제목) 결합 텍스트의 RapidFuzz 유사도가 threshold% 이상이면
     동일 공고로 간주하고 마감일이 최신인 것만 유지.
 
-    성능 최적화:
-    - 먼저 uid 기준 정확 중복 제거
-    - 이후 출처별로 그룹화하여 Fuzzy 비교 범위 축소
+    규칙:
+    - 회사명이 비어있는 공고는 Fuzzy 비교 대상에서 제외
+      (회사를 특정할 수 없으면 다른 회사 공고와 잘못 중복 처리될 수 있음)
+    - 회사명이 있는 공고끼리만 비교
     """
     before = len(df)
 
@@ -221,34 +222,44 @@ def fuzzy_deduplicate(df: pd.DataFrame, threshold: int = FUZZY_THRESHOLD) -> pd.
     logger.info("  정확 중복 제거: %d건 → %d건", before, len(df))
 
     # 2단계: Fuzzy 중복 제거
-    # 비교 키: 회사명 + 공고제목 소문자 결합
     df["_fuzzy_key"] = (
         df["회사명"].fillna("").astype(str).str.strip().str.lower()
         + " "
         + df["공고제목"].fillna("").astype(str).str.strip().str.lower()
     )
+    # 회사명 비어있는지 여부 플래그
+    df["_has_company"] = df["회사명"].fillna("").astype(str).str.strip() != ""
 
-    # 마감일 기준 정렬 (최신 우선 — 마감일 없으면 뒤로)
+    # 마감일 기준 정렬 (최신 우선)
     df["_sort_key"] = df["마감일"].fillna("").astype(str)
     df = df.sort_values("_sort_key", ascending=False).reset_index(drop=True)
 
     keep_mask = [True] * len(df)
-    keys = df["_fuzzy_key"].tolist()
+    keys        = df["_fuzzy_key"].tolist()
+    has_company = df["_has_company"].tolist()
 
     for i in range(len(df)):
         if not keep_mask[i]:
             continue
+        # 회사명이 없는 공고(i)는 비교 기준으로 사용하지 않음
+        if not has_company[i]:
+            continue
         for j in range(i + 1, len(df)):
             if not keep_mask[j]:
                 continue
+            # 비교 대상(j)도 회사명이 없으면 건너뜀
+            if not has_company[j]:
+                continue
             score = fuzz.token_sort_ratio(keys[i], keys[j])
             if score >= threshold:
-                keep_mask[j] = False  # 최신(i)을 유지, 오래된(j) 제거
+                keep_mask[j] = False
 
     df = df[keep_mask].reset_index(drop=True)
-    df = df.drop(columns=["_fuzzy_key", "_sort_key"], errors="ignore")
+    df = df.drop(columns=["_fuzzy_key", "_sort_key", "_has_company"], errors="ignore")
 
-    logger.info("  Fuzzy 중복 제거 (임계값 %d%%): → %d건", threshold, len(df))
+    removed = before - len(df)
+    logger.info("  Fuzzy 중복 제거 (임계값 %d%%, 회사명 없는 공고 제외): %d건 제거 → %d건 남음",
+                threshold, removed, len(df))
     return df
 
 

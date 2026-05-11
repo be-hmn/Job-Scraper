@@ -23,7 +23,15 @@ SEARCH_QUERIES = {
     "클라우드 엔지니어": "cloud engineer",
     "보안관제":          "security operations",
     "AI 엔지니어":       "AI engineer",
+    # 인턴십
+    "개발 인턴":         "software engineer intern",
+    "보안 인턴":         "security intern",
+    "데이터 인턴":       "data engineer intern",
 }
+
+# 링크드인 직무 유형 필터
+# f_JT=I: 인턴십, 없으면 전체
+_INTERN_QUERIES = {"개발 인턴", "보안 인턴", "데이터 인턴"}
 
 
 class LinkedInScraper(BaseScraper):
@@ -39,10 +47,13 @@ class LinkedInScraper(BaseScraper):
                 params = {
                     "keywords": query,
                     "location": "South Korea",
-                    "start": page * 25,
-                    "count": 25,
-                    "f_TPR": "r604800",  # 최근 1주일
+                    "start":    page * 25,
+                    "count":    25,
+                    "f_TPR":    "r604800",  # 최근 1주일
                 }
+                # 인턴십 쿼리는 f_JT=I 필터 추가
+                if label in _INTERN_QUERIES:
+                    params["f_JT"] = "I"
                 resp = self.get(API_URL, params=params, headers={
                     "Referer": "https://www.linkedin.com/jobs/search/",
                     "Accept": "application/json, text/html",
