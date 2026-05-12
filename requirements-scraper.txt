@@ -1,0 +1,12 @@
+# 로컬 스크래핑 실행 시 추가 설치:
+#   pip install -r requirements.txt -r requirements-scraper.txt
+
+# ── HTTP / 스크래핑 ──────────────────────────────────────────────
+requests==2.32.3
+curl_cffi==0.7.4
+fake-useragent==1.5.1
+
+# ── Selenium ─────────────────────────────────────────────────────
+selenium==4.25.0
+seleniumbase==4.32.7
+webdriver-manager==4.0.2
