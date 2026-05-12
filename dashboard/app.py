@@ -486,16 +486,6 @@ with tab_search:
     }
     experience_val = _exp_map.get(experience, "전체")
 
-    # 경력 필터 값 정규화 (UI 표시명 → 내부 값)
-    _exp_map = {
-        "전체": "전체",
-        "신입 (경력무관 포함)": "신입",
-        "1~3년": "1~3년",
-        "3~5년": "3~5년",
-        "5년 이상": "5년 이상",
-    }
-    experience_val = _exp_map.get(experience, "전체")
-
     # ── 검색 버튼 ────────────────────────────────────────────────
     col_btn = st.columns([1, 4])
     with col_btn[0]:
@@ -548,25 +538,123 @@ with tab_search:
             sources=sources if sources else None,
             locations=locations if locations else None,
             experience=experience_val,
-            tech_stack=tech_filter if tech_filter    # 경력 필터 값 정규화 (UI 표시명 → 내부 값)
-        _exp_map = {
-            "전체": "전체",
-            "신입 (경력무관 포함)": "신입",
-            "1~3년": "1~3년",
-            "3~5년": "3~5년",
-            "5년 이상": "5년 이상",
-        }
-        experience_val = _exp_map.get(experience, "전체")
+            tech_stack=tech_filter if tech_filter else None,
+        )
 
-        # ── 검색 버튼 ────────────────────────────────────────────────
-        col_btn = st.columns([1, 4])
-        with col_btn[0]:
-            search_clicked = st.button(
-                "🔍 검색",
-                type="primary",
-                use_container_width=True,
-                key="search_btn"
+        # 마감일 기준 정렬 (최신순)
+        if "마감일" in filtered_results.columns:
+            filtered_results = filtered_results.sort_values(
+                "마감일", ascending=False, na_position="last"
+            ).reset_index(drop=True)
+
+        st.info(f"💼 **{len(filtered_results)}개** 공고를 표시합니다 (필터 적용)")
+        render_job_cards(filtered_results, show_score=False)
+
+
+# ════════════════════════════════════════════════════════════════
+# 탭 2: 통계
+# ════════════════════════════════════════════════════════════════
+
+with tab_stats:
+    st.markdown("### 📊 수집 데이터 통계")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("총 공고 수",       f"{stats['total']:,}건")
+    m2.metric("수집 사이트",      f"{len(stats['by_source'])}개")
+    m3.metric("마감일 있는 공고", f"{stats['deadline_soon']}건")
+    m4.metric("근무지 종류",      f"{len(stats['by_location'])}개")
+
+    st.divider()
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**출처별 공고 수**")
+        src_df = pd.DataFrame(
+            stats["by_source"].items(), columns=["출처", "건수"]
+        ).sort_values("건수", ascending=True)
+        fig1 = px.bar(
+            src_df, x="건수", y="출처", orientation="h",
+            color="건수", color_continuous_scale="Blues",
+            template="plotly_dark",
+        )
+        fig1.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig1, use_container_width=True)
+
+        direct_sources = {"카카오", "네이버", "토스", "쿠팡"}
+        raw = stats.get("by_source_raw", {})
+        direct_detail = {k: v for k, v in raw.items() if k in direct_sources}
+        if direct_detail:
+            with st.expander("개별 공고 세부 내역"):
+                detail_df = pd.DataFrame(
+                    direct_detail.items(), columns=["기업", "건수"]
+                ).sort_values("건수", ascending=False)
+                st.dataframe(detail_df, hide_index=True, use_container_width=True)
+
+    with col2:
+        st.markdown("**검색 키워드별 공고 수**")
+        kw_df = pd.DataFrame(
+            stats["by_keyword"].items(), columns=["키워드", "건수"]
+        ).sort_values("건수", ascending=True)
+        fig2 = px.bar(
+            kw_df, x="건수", y="키워드", orientation="h",
+            color="건수", color_continuous_scale="Purples",
+            template="plotly_dark",
+        )
+        fig2.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig2, use_container_width=True)
+
+    if "top_tech" in stats and stats["top_tech"]:
+        st.markdown("**🛠 기술 스택 TOP 15**")
+        tech_df = pd.DataFrame(
+            stats["top_tech"].items(), columns=["기술", "건수"]
+        ).sort_values("건수", ascending=True)
+        fig_tech = px.bar(
+            tech_df, x="건수", y="기술", orientation="h",
+            color="건수", color_continuous_scale="Greens",
+            template="plotly_dark",
+        )
+        fig_tech.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig_tech, use_container_width=True)
+
+    col3, col4 = st.columns(2)
+    with col3:
+        st.markdown("**근무지 TOP 10**")
+        loc_df = pd.DataFrame(
+            stats["by_location"].items(), columns=["근무지", "건수"]
+        )
+        fig3 = px.pie(
+            loc_df, names="근무지", values="건수",
+            template="plotly_dark", hole=0.4,
+        )
+        fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig3, use_container_width=True)
+
+    with col4:
+        if "exp_dist" in stats and stats["exp_dist"]:
+            st.markdown("**💼 경력 분포**")
+            exp_df = pd.DataFrame(
+                [(str(k) + "년", v) for k, v in sorted(stats["exp_dist"].items())
+                 if k is not None and k >= 0],
+                columns=["경력", "건수"],
             )
+            if not exp_df.empty:
+                fig4 = px.bar(
+                    exp_df, x="경력", y="건수",
+                    color="건수", color_continuous_scale="Oranges",
+                    template="plotly_dark",
+                )
+                fig4.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig4, use_container_width=True)
+
+    st.divider()
+    st.markdown("**전체 데이터 테이블**")
+    display_cols = [c for c in df_raw.columns if c not in ("_search_text", "uid")]
+    st.dataframe(
+        df_raw[display_cols],
+        use_container_width=True,
+        column_config={"공고URL": st.column_config.LinkColumn("공고URL")},
+        hide_index=True,
+    )
 
         with col_btn[1]:
             if st.session_state.first_visit and st.session_state.query_text:
