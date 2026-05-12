@@ -1,17 +1,23 @@
 {
-  "generated_at": "2026-05-12 13:18:25",
+  "generated_at": "2026-05-12 14:27:55",
   "source": "main.py 직접 수집",
-  "total_raw": 443,
+  "total_raw": 1564,
   "by_source": {
+    "잡코리아": 668,
+    "사람인": 337,
     "원티드": 185,
-    "쿠팡": 125,
+    "쿠팡": 127,
+    "토스": 81,
     "점핏": 79,
-    "링크드인": 51,
+    "링크드인": 50,
+    "랠릿": 19,
+    "카카오": 12,
+    "잡플래닛": 3,
     "네이버": 3
   },
-  "intern_count": 36,
-  "has_deadline": 443,
-  "no_company": 0,
-  "total_after_dedup": 417,
-  "removed_by_dedup": 26
+  "intern_count": 85,
+  "has_deadline": 1561,
+  "no_company": 22,
+  "total_after_dedup": 1509,
+  "removed_by_dedup": 55
 }
