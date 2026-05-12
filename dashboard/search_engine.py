@@ -262,7 +262,7 @@ class JobSearchEngine:
         experience: str = "전체",
         tech_stack: list = None,
         intern_only: bool = False,
-        min_score: float = 10.0,   # 상향: 무관 공고 제거
+        min_score: float = 5.0,   # 상향: 무관 공고 제거
     ) -> tuple:
         """
         LLM으로 자연어를 확장한 뒤 벡터 유사도 검색 수행.
