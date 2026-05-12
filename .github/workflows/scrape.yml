@@ -1,0 +1,86 @@
+name: Daily Job Scrape
+
+on:
+  schedule:
+    # 매일 UTC 17:00 = KST 02:00
+    - cron: "0 17 * * *"
+  workflow_dispatch:  # 수동 실행 허용
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 체크아웃 ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python 설정 ───────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── Chrome 설치 (Ubuntu) ──────────────────────────────────
+      - name: Install Google Chrome
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+            | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -q
+          sudo apt-get install -y google-chrome-stable
+          google-chrome --version
+
+      # ── 의존성 설치 ───────────────────────────────────────────
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 기존 DB 복원 (artifact) ───────────────────────────────
+      - name: Restore database artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: job-database
+          path: output/
+        continue-on-error: true  # 첫 실행 시 artifact 없어도 계속 진행
+
+      # ── 스크래핑 실행 ─────────────────────────────────────────
+      - name: Run scraper
+        env:
+          CI: "true"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SARAMIN_API_KEY: ${{ secrets.SARAMIN_API_KEY }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          SERVICE_CONTACT: ${{ secrets.SERVICE_CONTACT }}
+          CRAWL_DELAY_MIN: "3"
+          CRAWL_DELAY_MAX: "7"
+        run: |
+          python main.py --sites 사람인 원티드 점핏 링크드인 네이버 쿠팡
+          echo "=== DB 통계 ==="
+          python -c "
+          from database import count_jobs, get_sources, DB_PATH
+          print(f'DB 경로: {DB_PATH}')
+          print(f'총 공고 수: {count_jobs()}건')
+          print(f'출처: {get_sources()}')
+          "
+
+      # ── DB artifact 저장 ──────────────────────────────────────
+      - name: Upload database artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-database
+          path: output/job_database.db
+          retention-days: 30
+
+      # ── 로그 artifact 저장 ────────────────────────────────────
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-logs-${{ github.run_number }}
+          path: |
+            output/scraper.log
+            output/pipeline_stats.json
+          retention-days: 7

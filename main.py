@@ -7,11 +7,16 @@ IT/보안 채용 공고 통합 스크래퍼
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
+
+# __file__ 기반 루트 경로 — GitHub Actions / Streamlit Cloud 등 CWD가 다른 환경 대응
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+os.chdir(_ROOT)  # 항상 프로젝트 루트를 CWD로 고정
 
 from scrapers.saramin           import SaraminScraper
 from scrapers.wanted            import WantedScraper
@@ -29,6 +34,15 @@ from scrapers.selenium_scrapers import (
 from utils import setup_logging, deduplicate, save_csv, print_summary
 
 logger = logging.getLogger(__name__)
+
+# ── GitHub Actions / CI 환경 감지 ────────────────────────────────
+_IS_CI = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
+
+if _IS_CI:
+    # Ubuntu CI 환경: Selenium이 사용할 Chrome 옵션을 환경변수로 전달
+    # selenium_base.py / SeleniumBase가 이 값을 읽어 headless 모드로 실행
+    os.environ.setdefault("CHROME_OPTIONS", "--headless=new,--no-sandbox,--disable-dev-shm-usage,--disable-gpu")
+    logger.info("CI 환경 감지: Chrome headless 옵션 적용")
 
 ALL_SCRAPERS = {
     "사람인":   SaraminScraper,
@@ -99,7 +113,9 @@ def _run_once(args) -> None:
         # DB 저장 모드 (기본) — raw 데이터를 DB에 바로 저장 후 파이프라인 실행
         import pandas as pd
         from pipeline import run_pipeline_from_jobs
+        logger.info("파이프라인 시작: %d건 처리 예정", len(all_jobs))
         run_pipeline_from_jobs(all_jobs)
+        logger.info("파이프라인 완료 — DB: %s", os.path.join(_ROOT, "output", "job_database.db"))
 
 
 def _run_scheduled(args) -> None:

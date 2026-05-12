@@ -36,7 +36,10 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join("output", "job_database.db")
+# __file__ 기반 절대 경로 — 어느 디렉터리에서 실행해도 동일하게 동작
+# database.py는 프로젝트 루트에 위치하므로 dirname(__file__)이 곧 루트
+_ROOT   = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_ROOT, "output", "job_database.db")
 
 # ── DDL ──────────────────────────────────────────────────────────
 _CREATE_TABLE_SQL = """
@@ -73,7 +76,8 @@ _CREATE_INDEX_SQL = [
 @contextmanager
 def get_connection(db_path: str = DB_PATH) -> Generator[sqlite3.Connection, None, None]:
     """SQLite 연결 컨텍스트 매니저"""
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    parent = os.path.dirname(os.path.abspath(db_path))
+    os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row  # 컬럼명으로 접근 가능
     conn.execute("PRAGMA journal_mode=WAL;")   # 동시 읽기 성능 향상
@@ -182,7 +186,7 @@ def upsert_jobs(df: pd.DataFrame, db_path: str = DB_PATH) -> tuple[int, int]:
     # uid 없는 레코드 제외
     records = [r for r in records if r["uid"]]
 
-    inserted = updated = 0
+    inserted = updated = skipped = 0
 
     with get_connection(db_path) as conn:
         for rec in records:
@@ -194,8 +198,13 @@ def upsert_jobs(df: pd.DataFrame, db_path: str = DB_PATH) -> tuple[int, int]:
                 cursor2 = conn.execute(_UPDATE_DEADLINE_SQL, rec)
                 if cursor2.rowcount > 0:
                     updated += 1
+                else:
+                    skipped += 1
 
-    logger.info("DB Upsert 완료: 신규 %d건 / 마감일 갱신 %d건", inserted, updated)
+    logger.info(
+        "DB Upsert 완료 [%s]: 신규 %d건 / 마감일 갱신 %d건 / 변경없음 %d건 (총 처리 %d건)",
+        os.path.basename(db_path), inserted, updated, skipped, len(records),
+    )
     return inserted, updated
 
 

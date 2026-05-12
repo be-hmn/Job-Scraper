@@ -18,6 +18,25 @@ sys.path.insert(0, ROOT)
 
 from dashboard.search_engine import JobSearchEngine, load_csv, list_csv_files
 
+# ── 환경변수: st.secrets 우선, 없으면 .env 폴백 ─────────────────
+def _get_secret(key: str, default: str = "") -> str:
+    """Streamlit Cloud의 st.secrets를 우선 사용하고, 없으면 환경변수로 폴백."""
+    try:
+        val = st.secrets.get(key)
+        if val:
+            return str(val)
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+# 환경변수를 os.environ에 주입 (하위 모듈이 os.getenv()로 읽을 수 있도록)
+for _k in ("GEMINI_API_KEY", "GEMINI_MODEL", "OPENAI_API_KEY",
+           "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION",
+           "SARAMIN_API_KEY"):
+    _v = _get_secret(_k)
+    if _v and not os.environ.get(_k):
+        os.environ[_k] = _v
+
 # ── 페이지 설정 ──────────────────────────────────────────────────
 st.set_page_config(
     page_title="IT/보안 채용 대시보드",
@@ -158,15 +177,31 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
 # 데이터 로드 (캐시)
 # ════════════════════════════════════════════════════════════════
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner="데이터 로드 중...")
 def load_data(path: str) -> pd.DataFrame:
+    """CSV 파일 로드 — 1시간 캐시"""
     return load_csv(path)
 
 
-@st.cache_resource
+@st.cache_data(ttl=3600, show_spinner="DB 로드 중...")
+def load_db_data() -> Optional[pd.DataFrame]:
+    """DB 데이터 로드 — 1시간 캐시 (배포 환경에서 재실행 없이 최신 데이터 유지)"""
+    return _load_from_db()
+
+
+@st.cache_resource(show_spinner="검색 엔진 초기화 중...")
 def get_engine(path: str, embedder_type: str, _df: Optional[pd.DataFrame] = None) -> JobSearchEngine:
+    """
+    JobSearchEngine 인스턴스 캐시 — st.cache_resource로 TF-IDF 모델을 프로세스 수명 동안 유지.
+    path가 '__db__'이면 _df를 직접 사용 (DB 데이터).
+    embedder_type이 바뀌면 자동으로 재초기화.
+    """
     df = _df if path == "__db__" and _df is not None else load_data(path)
-    return JobSearchEngine(df, embedder_type=embedder_type)
+    engine = JobSearchEngine(df, embedder_type=embedder_type)
+    # tfidf는 즉시 인덱스 빌드 (무료, 빠름) — 첫 검색 지연 방지
+    if embedder_type == "tfidf":
+        engine.build_index()
+    return engine
 
 
 # ════════════════════════════════════════════════════════════════
@@ -178,7 +213,7 @@ with st.sidebar:
     st.divider()
 
     # 데이터 소스
-    db_df  = _load_from_db()
+    db_df  = load_db_data()
     has_db = db_df is not None and not db_df.empty
 
     if has_db:
@@ -221,12 +256,12 @@ with st.sidebar:
 
     # LLM 상태 표시
     st.markdown("**🤖 쿼리 확장 LLM**")
-    if os.getenv("GEMINI_API_KEY"):
-        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    if _get_secret("GEMINI_API_KEY"):
+        model = _get_secret("GEMINI_MODEL", "gemini-2.5-flash")
         st.success(f"Gemini ({model})", icon="✅")
-    elif os.getenv("OPENAI_API_KEY"):
+    elif _get_secret("OPENAI_API_KEY"):
         st.success("OpenAI GPT", icon="✅")
-    elif os.getenv("AWS_ACCESS_KEY_ID"):
+    elif _get_secret("AWS_ACCESS_KEY_ID"):
         st.success("AWS Bedrock", icon="✅")
     else:
         st.warning("규칙 기반 폴백\n`.env`에 `GEMINI_API_KEY` 설정 권장", icon="⚠️")

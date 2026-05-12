@@ -33,14 +33,32 @@ CHROME_CANDIDATES = [
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
 
+# GitHub Actions / CI 환경에서 추가할 Chrome 옵션
+_CI_CHROME_ARGS = "--headless=new,--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
+_IS_CI = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
+
 
 def _find_chrome() -> str:
-    """Chrome 실행파일 경로 탐색. 없으면 빈 문자열 반환."""
+    """Chrome 실행파일 경로 탐색. CI 환경이면 시스템 chrome을 우선 탐색."""
     import subprocess
 
     env_bin = os.getenv("CHROME_BIN", "")
     if env_bin and os.path.isfile(env_bin):
         return env_bin
+
+    # CI(Ubuntu) 환경: which google-chrome / chromium-browser
+    if _IS_CI:
+        for cmd in ("google-chrome", "chromium-browser", "chromium", "chrome"):
+            try:
+                result = subprocess.run(
+                    ["which", cmd], capture_output=True, text=True, timeout=5
+                )
+                path = result.stdout.strip()
+                if path and os.path.isfile(path):
+                    return path
+            except Exception:
+                pass
+
     for p in CHROME_CANDIDATES:
         if os.path.isfile(p):
             return p
@@ -74,7 +92,7 @@ class SeleniumBaseScraper(BaseScraper):
         with self._get_sb_context() as sb: 형태로 사용.
         """
         chrome_path = _find_chrome()
-        if not chrome_path:
+        if not chrome_path and not _IS_CI:
             raise RuntimeError(
                 "Chrome 브라우저를 찾을 수 없습니다.\n"
                 "해결 방법:\n"
@@ -82,15 +100,23 @@ class SeleniumBaseScraper(BaseScraper):
                 "  2) 또는 .env 에 CHROME_BIN=C:\\path\\to\\chrome.exe 설정"
             )
 
-        return SB(
-            uc=True,               # Undetected Chrome Mode
-            headless=True,         # 헤드리스 (UC Mode에서도 봇 탐지 우회)
-            binary_location=chrome_path,
-            # 추가 안티봇 옵션
-            no_sandbox=True,
-            disable_gpu=True,
-            window_size="1920,1080",
+        # CI 환경: --no-sandbox 등 필수 옵션 추가, Chrome 경로 없어도 시스템 chrome 사용
+        base_args = "--no-sandbox,--disable-gpu,--window-size=1920,1080"
+        if _IS_CI:
+            chromium_args = f"--headless=new,{base_args},--disable-dev-shm-usage"
+            logger.info("[SeleniumBase] CI 환경: headless + no-sandbox 옵션 적용")
+        else:
+            chromium_args = base_args
+
+        sb_kwargs = dict(
+            uc=True,
+            headless=True,
+            chromium_arg=chromium_args,
         )
+        if chrome_path:
+            sb_kwargs["binary_location"] = chrome_path
+
+        return SB(**sb_kwargs)
 
     def _wait_and_get(
         self,
