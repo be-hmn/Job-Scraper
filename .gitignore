@@ -38,3 +38,5 @@ Thumbs.db
 
 # ── WebDriver 캐시 ───────────────────────────────────────────────
 .wdm/
+/downloaded_files/driver_fixing.lock
+/downloaded_files/pyautogui.lock
