@@ -3,13 +3,13 @@ name: Daily Job Scrape
 on:
   schedule:
     # 매일 UTC 17:00 = KST 02:00
-    - cron: "0 17 * * *"
+    - cron: "0 8 * * 5"
   workflow_dispatch:  # 수동 실행 허용
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
 
     steps:
       # ── 체크아웃 ──────────────────────────────────────────────
@@ -57,7 +57,7 @@ jobs:
           CRAWL_DELAY_MIN: "3"
           CRAWL_DELAY_MAX: "7"
         run: |
-          python main.py --sites 사람인 원티드 점핏 링크드인 네이버 쿠팡
+          python main.py --sites 사람인 잡코리아 원티드 점핏 잡플래닛 링크드인 랠릿 카카오 네이버 토스 쿠팡
           echo "=== DB 통계 ==="
           python -c "
           from database import count_jobs, get_sources, DB_PATH
