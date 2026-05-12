@@ -52,30 +52,29 @@ _USER_PROMPT_TEMPLATE = "사용자 입력: {query}"
 
 def _call_gemini(query: str) -> Optional[dict]:
     """Google Gemini로 쿼리 확장.
-    Free tier  : gemini-2.5-flash  (GEMINI_MODEL 미설정 시 기본값)
-    Advanced   : gemini-2.5-pro    (GEMINI_MODEL=gemini-2.5-pro 설정)
+    google-generativeai SDK 사용 (pip install google-generativeai)
+    Free tier  : gemini-2.0-flash-lite  (GEMINI_MODEL 미설정 시 기본값)
+    Advanced   : gemini-1.5-pro         (GEMINI_MODEL=gemini-1.5-pro 설정)
     """
     try:
-        from google import genai
-        from google.genai import types
+        import google.generativeai as genai
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None
 
-        model  = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
-        client = genai.Client(api_key=api_key)
-        prompt = f"{_SYSTEM_PROMPT}\n\n{_USER_PROMPT_TEMPLATE.format(query=query)}"
-
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        genai.configure(api_key=api_key)
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+        model      = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=_SYSTEM_PROMPT,
+            generation_config=genai.GenerationConfig(
                 max_output_tokens=256,
                 temperature=0.1,
                 response_mime_type="application/json",
             ),
         )
+        resp = model.generate_content(_USER_PROMPT_TEMPLATE.format(query=query))
         return _parse_json(resp.text.strip())
 
     except Exception as e:
@@ -196,7 +195,7 @@ def expand_query(query: str) -> dict:
     if os.getenv("GEMINI_API_KEY"):
         result = _call_gemini(query)
         if result:
-            provider = f"gemini ({os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')})"
+            provider = f"gemini ({os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-lite')})"
 
     if result is None and os.getenv("OPENAI_API_KEY"):
         result = _call_openai(query)

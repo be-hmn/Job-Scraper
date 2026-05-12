@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-05-12 13:18:25",
+  "source": "main.py 직접 수집",
+  "total_raw": 443,
+  "by_source": {
+    "원티드": 185,
+    "쿠팡": 125,
+    "점핏": 79,
+    "링크드인": 51,
+    "네이버": 3
+  },
+  "intern_count": 36,
+  "has_deadline": 443,
+  "no_company": 0,
+  "total_after_dedup": 417,
+  "removed_by_dedup": 26
+}

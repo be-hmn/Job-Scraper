@@ -257,7 +257,7 @@ with st.sidebar:
     # LLM 상태 표시
     st.markdown("**🤖 쿼리 확장 LLM**")
     if _get_secret("GEMINI_API_KEY"):
-        model = _get_secret("GEMINI_MODEL", "gemini-2.5-flash")
+        model = _get_secret("GEMINI_MODEL", "gemini-2.0-flash-lite")
         st.success(f"Gemini ({model})", icon="✅")
     elif _get_secret("OPENAI_API_KEY"):
         st.success("OpenAI GPT", icon="✅")

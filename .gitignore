@@ -5,9 +5,13 @@
 .streamlit/secrets.toml
 
 # ── 수집 결과 (용량 크고 재생성 가능) ───────────────────────────
-output/
-# output/ 폴더 자체는 무시하되 .gitkeep은 추적 (폴더 구조 유지)
-!output/.gitkeep
+# output/ 전체 대신 파일 단위로 무시 — DB는 Cloud 배포를 위해 추적
+output/*.csv
+output/*.log
+output/.gitkeep
+# DB와 통계는 추적 (Streamlit Cloud가 읽어야 함)
+# output/job_database.db  → 추적
+# output/pipeline_stats.json → 추적
 
 # ── Python 캐시 ──────────────────────────────────────────────────
 __pycache__/

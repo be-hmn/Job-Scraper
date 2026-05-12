@@ -1,12 +1,14 @@
-# 로컬 스크래핑 실행 시 추가 설치:
+# 로컬 스크래핑 실행 시 requirements.txt와 함께 설치:
 #   pip install -r requirements.txt -r requirements-scraper.txt
+#
+# Streamlit Cloud에는 requirements.txt + packages.txt만 사용됩니다.
+# (selenium/curl_cffi는 Cloud에서 불필요)
 
 # ── HTTP / 스크래핑 ──────────────────────────────────────────────
-requests==2.32.3
-curl_cffi==0.7.4
-fake-useragent==1.5.1
+curl_cffi
+fake-useragent
 
 # ── Selenium ─────────────────────────────────────────────────────
-selenium==4.25.0
-seleniumbase==4.32.7
-webdriver-manager==4.0.2
+selenium
+seleniumbase
+webdriver-manager
