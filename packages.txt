@@ -1,5 +1,0 @@
-# Streamlit Cloud apt 패키지
-# 대시보드는 Selenium을 사용하지 않으므로 현재 비어 있습니다.
-# 스크래핑 기능을 Cloud에서 실행할 경우에만 아래 주석을 해제하세요.
-# chromium
-# chromium-driver
