@@ -48,28 +48,105 @@ st.set_page_config(
 # ── CSS ──────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+/* ── 공고 카드 ── */
 .job-card {
     background: #1e1e2e;
     border: 1px solid #313244;
-    border-radius: 10px;
-    padding: 16px 20px;
-    margin-bottom: 12px;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 14px;
 }
-.job-title   { font-size: 1.05rem; font-weight: 700; color: #cdd6f4; }
-.job-company { color: #89b4fa; font-size: 0.9rem; margin-top: 4px; }
-.job-meta    { color: #a6adc8; font-size: 0.82rem; margin-top: 6px; }
+.job-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #cdd6f4;
+    line-height: 1.4;
+}
+.job-company {
+    color: #89b4fa;
+    font-size: 0.95rem;
+    margin-top: 5px;
+    font-weight: 500;
+}
+.job-meta {
+    color: #a6adc8;
+    font-size: 0.85rem;
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ── 배지 ── */
 .badge {
-    display: inline-block; padding: 2px 8px;
-    border-radius: 12px; font-size: 0.75rem; margin-right: 4px;
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
 }
 .badge-source { background:#313244; color:#cba6f7; }
-.badge-exp    { background:#313244; color:#a6e3a1; }
-.badge-loc    { background:#313244; color:#fab387; }
-.badge-score  { background:#1e3a5f; color:#89dceb; }
+.badge-exp    { background:#1a3a2a; color:#a6e3a1; }
+.badge-loc    { background:#3a2a1a; color:#fab387; }
+.badge-score  { background:#1e3a5f; color:#89dceb; font-weight: 700; }
 .badge-tech   { background:#2a2a3e; color:#f9e2af; }
-.score-bar  { height:4px; border-radius:2px; background:#313244; margin-top:8px; }
-.score-fill { height:4px; border-radius:2px;
-              background:linear-gradient(90deg,#89b4fa,#cba6f7); }
+
+/* ── 유사도 바 ── */
+.score-bar  {
+    height: 5px;
+    border-radius: 3px;
+    background: #313244;
+    margin-top: 10px;
+}
+.score-fill {
+    height: 5px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #89b4fa, #cba6f7);
+}
+
+/* ── 공고 보기 버튼 ── */
+.job-link-btn {
+    display: inline-block;
+    margin-top: 14px;
+    padding: 9px 22px;
+    background: linear-gradient(135deg, #89b4fa 0%, #cba6f7 100%);
+    color: #1e1e2e !important;
+    font-size: 0.92rem;
+    font-weight: 700;
+    border-radius: 8px;
+    text-decoration: none !important;
+    letter-spacing: 0.02em;
+    transition: opacity 0.15s;
+}
+.job-link-btn:hover { opacity: 0.85; }
+
+/* ── 예시 쿼리 버튼 (Streamlit 기본 버튼 오버라이드) ── */
+div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
+    background: #2a2a3e;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    padding: 6px 10px;
+    transition: background 0.15s, border-color 0.15s;
+}
+div[data-testid="stHorizontalBlock"] button[kind="secondary"]:hover {
+    background: #313244;
+    border-color: #89b4fa;
+    color: #89b4fa;
+}
+
+/* ── 검색 버튼 ── */
+button[kind="primary"] {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.03em !important;
+    border-radius: 8px !important;
+    padding: 10px 0 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -138,10 +215,9 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
             for t in (tech_list[:5] if isinstance(tech_list, list) else [])
         )
 
-        deadline_part = f'&nbsp;📅 {deadline}' if deadline else ""
+        deadline_part = f'<span style="color:#a6adc8;">📅 {deadline}</span>' if deadline else ""
         link_part = (
-            f'<a href="{url}" target="_blank" '
-            f'style="color:#89b4fa;font-size:0.82rem;">🔗 공고 보기</a>'
+            f'<a href="{url}" target="_blank" class="job-link-btn">🔗 공고 보기</a>'
         ) if url else ""
 
         score_part = ""
@@ -165,9 +241,9 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
             f'<span class="badge badge-exp">💼 {exp}</span>'
             f'{deadline_part}'
             '</div>'
-            f'{tech_badges}'
+            f'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">{tech_badges}</div>'
             f'{score_part}'
-            f'<div style="margin-top:8px">{link_part}</div>'
+            f'<div>{link_part}</div>'
             '</div>',
             unsafe_allow_html=True,
         )
