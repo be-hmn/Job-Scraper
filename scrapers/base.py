@@ -1,23 +1,30 @@
 """
 모든 스크래퍼의 기반 클래스
+
+HTTP 요청: curl_cffi (impersonate='chrome120')
+  - TLS 지문, HTTP/2, 헤더 순서까지 실제 Chrome 120과 동일하게 모사
+  - requests 대비 봇 탐지 우회율이 높음
+
+딜레이: random.uniform(3, 7) 초 — 인간다운 체류 시간 부여
 """
 
+import random
 import time
 import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 
-import requests
-from config import HEADERS, REQUEST_DELAY, REQUEST_TIMEOUT
+from curl_cffi import requests as cffi_requests
+from config import HEADERS, REQUEST_TIMEOUT, CRAWL_DELAY_MIN, CRAWL_DELAY_MAX
 
 logger = logging.getLogger(__name__)
 
-# HTTP 상태 코드별 메시지
+# HTTP 상태 코드별 힌트
 _STATUS_HINTS = {
     401: "인증 필요 (로그인/API 키 확인)",
     403: "접근 차단 (IP 차단 또는 봇 감지)",
     404: "엔드포인트 없음 (API 구조 변경 가능성)",
-    429: "요청 과다 (레이트 리밋 — 딜레이 증가 필요)",
+    429: "요청 과다 (레이트 리밋 — CRAWL_DELAY_MAX 값을 늘리세요)",
     503: "서버 일시 불가 (잠시 후 재시도)",
 }
 
@@ -28,7 +35,8 @@ class BaseScraper(ABC):
     site_name: str = "Unknown"
 
     def __init__(self):
-        self.session = requests.Session()
+        # curl_cffi Session — Chrome 120 TLS/HTTP2 지문 모사
+        self.session = cffi_requests.Session(impersonate="chrome120")
         self.session.headers.update(HEADERS)
 
     def get(
@@ -36,33 +44,46 @@ class BaseScraper(ABC):
         url: str,
         params: dict = None,
         **kwargs,
-    ) -> Optional[requests.Response]:
-        """GET 요청 + 에러 처리 + 딜레이"""
+    ) -> Optional[cffi_requests.Response]:
+        """
+        GET 요청 + 봇 탐지 우회 + 인간다운 딜레이.
+
+        curl_cffi impersonate='chrome120':
+          - TLS ClientHello 지문이 실제 Chrome 120과 동일
+          - HTTP/2 헤더 순서, pseudo-header 순서까지 모사
+          - requests/httpx 대비 Cloudflare, Akamai 우회율 대폭 향상
+        """
+        # 인간다운 체류 시간 (config에서 설정 가능, 기본 3~7초)
+        delay = random.uniform(CRAWL_DELAY_MIN, CRAWL_DELAY_MAX)
+        time.sleep(delay)
+
         try:
-            time.sleep(REQUEST_DELAY)
             resp = self.session.get(
-                url, params=params, timeout=REQUEST_TIMEOUT, **kwargs
+                url,
+                params=params,
+                timeout=REQUEST_TIMEOUT,
+                **kwargs,
             )
             resp.raise_for_status()
             return resp
-        except requests.HTTPError as e:
+
+        except cffi_requests.HTTPError as e:
             status = e.response.status_code if e.response is not None else "?"
             hint   = _STATUS_HINTS.get(status, "")
             logger.warning(
                 "[%s] HTTP %s%s | URL: %s",
-                self.site_name,
-                status,
+                self.site_name, status,
                 f" ({hint})" if hint else "",
                 url,
             )
             return None
-        except requests.ConnectionError as e:
+        except cffi_requests.ConnectionError as e:
             logger.warning("[%s] 연결 실패: %s | URL: %s", self.site_name, e, url)
             return None
-        except requests.Timeout:
+        except cffi_requests.Timeout:
             logger.warning("[%s] 타임아웃 (%ds) | URL: %s", self.site_name, REQUEST_TIMEOUT, url)
             return None
-        except requests.RequestException as e:
+        except Exception as e:
             logger.warning("[%s] 요청 실패: %s | URL: %s", self.site_name, e, url)
             return None
 

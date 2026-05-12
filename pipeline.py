@@ -1,103 +1,91 @@
 """
 채용 공고 데이터 정제 파이프라인
 ==============================
-실행: python pipeline.py [--input output/파일명.csv] [--output output/cleaned_job_postings.csv]
+기본 실행: python pipeline.py
+  - DB에서 미정제 공고를 읽어 정제 후 DB 업데이트
 
-기능:
-  A. Fuzzy Matching 기반 고도화 중복 제거 (RapidFuzz, 유사도 90% 이상)
-  B. 경력 수치화 (min_exp / max_exp), 기술 스택 추출 (tech_stack)
-  C. SHA-256 uid 기반 증분 저장 (기존 파일에 신규 공고만 Append)
-  D. description 텍스트 전처리 (자연어 검색 매칭용)
+CSV 입력: python pipeline.py --input output/파일명.csv
+  - CSV 파일을 읽어 정제 후 DB에 저장
+
+처리 순서:
+  1. 데이터 로드 (DB 또는 CSV)
+  2. uid 생성 (SHA-256)
+  3. 원본 통계 스냅샷 저장
+  4. Fuzzy Matching 기반 중복 제거
+  5. 경력 수치화 (min_exp / max_exp)
+  6. 기술 스택 추출 (tech_stack)
+  7. 검색용 텍스트 전처리 (_search_text)
+  8. DB 저장 (upsert)
 """
 
 import re
+import json
 import hashlib
 import logging
 import argparse
 import os
 import glob
-from typing import Optional
+from datetime import datetime
+from typing import List, Dict, Optional
 
 import pandas as pd
 from rapidfuzz import fuzz
 
-# ── 로깅 설정 ────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ── 상수 ─────────────────────────────────────────────────────────
-OUTPUT_DIR   = "output"
-CLEANED_FILE = os.path.join(OUTPUT_DIR, "cleaned_job_postings.csv")
-FUZZY_THRESHOLD = 90  # 유사도 임계값 (%)
+OUTPUT_DIR      = "output"
+STATS_FILE      = os.path.join(OUTPUT_DIR, "pipeline_stats.json")
+FUZZY_THRESHOLD = 90
 
-# 기술 스택 키워드 (대소문자 무관 매칭)
 TECH_KEYWORDS = [
-    # 언어
     "Python", "Java", "JavaScript", "TypeScript", "Go", "Golang",
     "Kotlin", "Swift", "C++", "C#", "Rust", "Scala", "Ruby", "PHP",
-    # 프레임워크/라이브러리
     "React", "Vue", "Angular", "Next.js", "Nuxt", "Spring", "Django",
     "FastAPI", "Flask", "Node.js", "Express", "NestJS", "Laravel",
-    # 인프라/DevOps
     "Docker", "Kubernetes", "K8s", "Terraform", "Ansible", "Jenkins",
     "GitHub Actions", "GitLab CI", "ArgoCD", "Helm",
-    # 클라우드
     "AWS", "GCP", "Azure", "Cloudflare",
-    # 데이터베이스
     "MySQL", "PostgreSQL", "MongoDB", "Redis", "Elasticsearch",
     "Cassandra", "DynamoDB", "Oracle", "MSSQL", "SQLite",
-    # 데이터/AI
     "Spark", "Kafka", "Airflow", "dbt", "Hadoop", "Flink",
     "TensorFlow", "PyTorch", "Scikit-learn", "Pandas", "NumPy",
     "LLM", "RAG", "MLflow", "Kubeflow",
-    # 보안
     "SIEM", "SOC", "WAF", "IDS", "IPS", "OWASP", "Burp Suite",
     "Metasploit", "Splunk", "QRadar",
-    # 기타
     "Git", "Linux", "Nginx", "gRPC", "GraphQL", "REST", "MSA",
 ]
 
-# 경력 추출 패턴
 _EXP_PATTERNS = [
-    # "3~5년", "3-5년", "3년~5년"
     (re.compile(r"(\d+)\s*[~\-]\s*(\d+)\s*년"), "range"),
-    # "3년 이상", "3년↑"
-    (re.compile(r"(\d+)\s*년\s*(이상|↑)"), "min_only"),
-    # "경력 3년", "경력3년"
-    (re.compile(r"경력\s*(\d+)\s*년"), "single"),
-    # "신입"
-    (re.compile(r"신입"), "entry"),
-    # "경력무관", "무관"
-    (re.compile(r"경력\s*무관|무관"), "any"),
-    # "10년↑" (숫자+↑)
-    (re.compile(r"(\d+)\s*년\s*↑"), "min_only"),
+    (re.compile(r"(\d+)\s*년\s*(이상|↑)"),       "min_only"),
+    (re.compile(r"경력\s*(\d+)\s*년"),            "single"),
+    (re.compile(r"신입"),                          "entry"),
+    (re.compile(r"경력\s*무관|무관"),              "any"),
 ]
+
+_TECH_PATTERNS = {
+    kw: re.compile(r"(?<![a-zA-Z])" + re.escape(kw) + r"(?![a-zA-Z])", re.IGNORECASE)
+    for kw in TECH_KEYWORDS
+}
 
 
 # ════════════════════════════════════════════════════════════════
-# A. 텍스트 전처리
+# 정제 함수들
 # ════════════════════════════════════════════════════════════════
 
 def preprocess_text(text: str) -> str:
-    """
-    자연어 검색 매칭을 위한 텍스트 전처리.
-    - 특수문자 제거 (단, 기술 스택 관련 문자 보존: +, #, .)
-    - 연속 공백 정규화
-    - 소문자 변환
-    """
     if not isinstance(text, str):
         return ""
-    # C++, C#, .NET 등 보존을 위해 알파벳/숫자/한글/공백/+#. 만 유지
     text = re.sub(r"[^\w\s\+\#\.\-]", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
     return text.lower()
 
 
 def build_search_text(row: pd.Series) -> str:
-    """검색용 통합 텍스트 생성 (공고제목 + 회사명 + 검색키워드)"""
     parts = [
         str(row.get("공고제목", "") or ""),
         str(row.get("회사명", "") or ""),
@@ -107,86 +95,7 @@ def build_search_text(row: pd.Series) -> str:
     return preprocess_text(" ".join(parts))
 
 
-# ════════════════════════════════════════════════════════════════
-# B-1. 경력 수치화
-# ════════════════════════════════════════════════════════════════
-
-def parse_experience(text: str) -> tuple[int, int]:
-    """
-    경력 텍스트에서 (min_exp, max_exp) 추출.
-    반환값: (min, max) — 신입=0,0 / 무관=-1,-1 / 미기재=None,None
-    """
-    if not isinstance(text, str) or not text.strip():
-        return (None, None)
-
-    for pattern, kind in _EXP_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            if kind == "range":
-                return (int(m.group(1)), int(m.group(2)))
-            elif kind == "min_only":
-                return (int(m.group(1)), None)
-            elif kind == "single":
-                v = int(m.group(1))
-                return (v, v)
-            elif kind == "entry":
-                return (0, 0)
-            elif kind == "any":
-                return (-1, -1)
-
-    return (None, None)
-
-
-def add_experience_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """경력 컬럼에서 min_exp / max_exp 파생 컬럼 생성 (Vectorized)"""
-    # 경력 컬럼이 없으면 공고제목에서도 시도
-    exp_text = df["경력"].fillna("").astype(str)
-    # 경력 컬럼이 비어있으면 공고제목에서 보완
-    mask_empty = exp_text.str.strip() == ""
-    exp_text[mask_empty] = df.loc[mask_empty, "공고제목"].fillna("").astype(str)
-
-    parsed = exp_text.map(parse_experience)
-    df["min_exp"] = parsed.map(lambda x: x[0] if x else None).astype("Int64")
-    df["max_exp"] = parsed.map(lambda x: x[1] if x else None).astype("Int64")
-    return df
-
-
-# ════════════════════════════════════════════════════════════════
-# B-2. 기술 스택 추출
-# ════════════════════════════════════════════════════════════════
-
-# 미리 컴파일된 패턴 (단어 경계 적용)
-_TECH_PATTERNS = {
-    kw: re.compile(r"(?<![a-zA-Z])" + re.escape(kw) + r"(?![a-zA-Z])", re.IGNORECASE)
-    for kw in TECH_KEYWORDS
-}
-
-
-def extract_tech_stack(text: str) -> list[str]:
-    """텍스트에서 기술 스택 키워드 추출"""
-    if not isinstance(text, str):
-        return []
-    found = [kw for kw, pat in _TECH_PATTERNS.items() if pat.search(text)]
-    return found
-
-
-def add_tech_stack_column(df: pd.DataFrame) -> pd.DataFrame:
-    """공고제목 + 검색키워드 통합 텍스트에서 tech_stack 컬럼 생성"""
-    combined = (
-        df["공고제목"].fillna("").astype(str)
-        + " "
-        + df["검색키워드"].fillna("").astype(str)
-    )
-    df["tech_stack"] = combined.map(extract_tech_stack)
-    return df
-
-
-# ════════════════════════════════════════════════════════════════
-# C. SHA-256 uid 생성
-# ════════════════════════════════════════════════════════════════
-
 def make_uid(row: pd.Series) -> str:
-    """회사명 + 공고제목 + URL 조합의 SHA-256 해시"""
     raw = "|".join([
         str(row.get("회사명", "") or "").strip(),
         str(row.get("공고제목", "") or "").strip(),
@@ -196,161 +105,212 @@ def make_uid(row: pd.Series) -> str:
 
 
 def add_uid_column(df: pd.DataFrame) -> pd.DataFrame:
-    """uid 컬럼 추가 (Vectorized)"""
+    df = df.copy()
     df["uid"] = df.apply(make_uid, axis=1)
     return df
 
 
-# ════════════════════════════════════════════════════════════════
-# A. Fuzzy Matching 기반 중복 제거
-# ════════════════════════════════════════════════════════════════
+def parse_experience(text: str) -> tuple:
+    if not isinstance(text, str) or not text.strip():
+        return (None, None)
+    for pattern, kind in _EXP_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            if kind == "range":    return (int(m.group(1)), int(m.group(2)))
+            elif kind == "min_only": return (int(m.group(1)), None)
+            elif kind == "single": v = int(m.group(1)); return (v, v)
+            elif kind == "entry":  return (0, 0)
+            elif kind == "any":    return (-1, -1)
+    return (None, None)
+
+
+def add_experience_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    exp_text = df["경력"].fillna("").astype(str)
+    exp_text = exp_text.where(
+        exp_text.str.strip() != "",
+        other=df["공고제목"].fillna("").astype(str),
+    )
+    parsed = exp_text.map(parse_experience)
+    df["min_exp"] = parsed.map(lambda x: x[0] if x else None).astype("Int64")
+    df["max_exp"] = parsed.map(lambda x: x[1] if x else None).astype("Int64")
+    return df
+
+
+def extract_tech_stack(text: str) -> list:
+    if not isinstance(text, str):
+        return []
+    return [kw for kw, pat in _TECH_PATTERNS.items() if pat.search(text)]
+
+
+def add_tech_stack_column(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    combined = (
+        df["공고제목"].fillna("").astype(str)
+        + " "
+        + df["검색키워드"].fillna("").astype(str)
+    )
+    df["tech_stack"] = combined.map(extract_tech_stack)
+    return df
+
 
 def fuzzy_deduplicate(df: pd.DataFrame, threshold: int = FUZZY_THRESHOLD) -> pd.DataFrame:
-    """
-    (회사명 + 공고제목) 결합 텍스트의 RapidFuzz 유사도가 threshold% 이상이면
-    동일 공고로 간주하고 마감일이 최신인 것만 유지.
-
-    규칙:
-    - 회사명이 비어있는 공고는 Fuzzy 비교 대상에서 제외
-      (회사를 특정할 수 없으면 다른 회사 공고와 잘못 중복 처리될 수 있음)
-    - 회사명이 있는 공고끼리만 비교
-    """
     before = len(df)
-
-    # 1단계: uid 기준 정확 중복 제거
     df = df.drop_duplicates(subset=["uid"], keep="first").reset_index(drop=True)
     logger.info("  정확 중복 제거: %d건 → %d건", before, len(df))
 
-    # 2단계: Fuzzy 중복 제거
     df["_fuzzy_key"] = (
         df["회사명"].fillna("").astype(str).str.strip().str.lower()
         + " "
         + df["공고제목"].fillna("").astype(str).str.strip().str.lower()
     )
-    # 회사명 비어있는지 여부 플래그
     df["_has_company"] = df["회사명"].fillna("").astype(str).str.strip() != ""
-
-    # 마감일 기준 정렬 (최신 우선)
-    df["_sort_key"] = df["마감일"].fillna("").astype(str)
+    df["_sort_key"]    = df["마감일"].fillna("").astype(str)
     df = df.sort_values("_sort_key", ascending=False).reset_index(drop=True)
 
-    keep_mask = [True] * len(df)
+    keep_mask   = [True] * len(df)
     keys        = df["_fuzzy_key"].tolist()
     has_company = df["_has_company"].tolist()
 
     for i in range(len(df)):
-        if not keep_mask[i]:
-            continue
-        # 회사명이 없는 공고(i)는 비교 기준으로 사용하지 않음
-        if not has_company[i]:
+        if not keep_mask[i] or not has_company[i]:
             continue
         for j in range(i + 1, len(df)):
-            if not keep_mask[j]:
+            if not keep_mask[j] or not has_company[j]:
                 continue
-            # 비교 대상(j)도 회사명이 없으면 건너뜀
-            if not has_company[j]:
-                continue
-            score = fuzz.token_sort_ratio(keys[i], keys[j])
-            if score >= threshold:
+            if fuzz.token_sort_ratio(keys[i], keys[j]) >= threshold:
                 keep_mask[j] = False
 
     df = df[keep_mask].reset_index(drop=True)
     df = df.drop(columns=["_fuzzy_key", "_sort_key", "_has_company"], errors="ignore")
 
     removed = before - len(df)
-    logger.info("  Fuzzy 중복 제거 (임계값 %d%%, 회사명 없는 공고 제외): %d건 제거 → %d건 남음",
-                threshold, removed, len(df))
+    logger.info(
+        "  Fuzzy 중복 제거 (임계값 %d%%, 회사명 없는 공고 제외): %d건 제거 → %d건 남음",
+        threshold, removed, len(df),
+    )
     return df
 
 
+def snapshot_stats(df: pd.DataFrame, source_label: str) -> dict:
+    by_source    = df["출처"].value_counts().to_dict()
+    intern_count = int(df["공고제목"].str.contains("인턴|intern", case=False, na=False).sum())
+    has_deadline = int(df["마감일"].fillna("").astype(str).str.strip().ne("").sum())
+    no_company   = int(df["회사명"].fillna("").astype(str).str.strip().eq("").sum())
+
+    stats = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source":       source_label,
+        "total_raw":    len(df),
+        "by_source":    by_source,
+        "intern_count": intern_count,
+        "has_deadline": has_deadline,
+        "no_company":   no_company,
+    }
+
+    logger.info("  ┌─ 원본 통계 스냅샷 ─────────────────────────")
+    logger.info("  │  총 공고 수    : %d건", stats["total_raw"])
+    logger.info("  │  인턴 공고     : %d건", intern_count)
+    logger.info("  │  마감일 있음   : %d건", has_deadline)
+    logger.info("  │  회사명 없음   : %d건 (Fuzzy 비교 제외 대상)", no_company)
+    logger.info("  │  출처별 건수   :")
+    for src, cnt in sorted(by_source.items(), key=lambda x: -x[1]):
+        logger.info("  │    %-14s %d건", src, cnt)
+    logger.info("  └────────────────────────────────────────────")
+    return stats
+
+
+def save_stats(stats: dict) -> None:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+    logger.info("  통계 저장 완료: %s", STATS_FILE)
+
+
 # ════════════════════════════════════════════════════════════════
-# C. 증분 저장 (Hash 기반 Append)
+# 핵심 정제 로직 (입력 형태 무관)
 # ════════════════════════════════════════════════════════════════
 
-def incremental_save(new_df: pd.DataFrame, output_path: str) -> pd.DataFrame:
-    """
-    기존 파일의 uid와 대조하여 신규 공고만 Append 저장.
-    기존 파일이 없으면 전체 저장.
-    """
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-    if os.path.exists(output_path):
-        existing = pd.read_csv(output_path, encoding="utf-8-sig")
-        existing_uids = set(existing["uid"].dropna().tolist())
-        new_only = new_df[~new_df["uid"].isin(existing_uids)]
-        logger.info(
-            "  증분 저장: 기존 %d건 / 신규 %d건 / 추가 대상 %d건",
-            len(existing), len(new_df), len(new_only),
-        )
-        if not new_only.empty:
-            combined = pd.concat([existing, new_only], ignore_index=True)
-            combined.to_csv(output_path, index=False, encoding="utf-8-sig")
-            logger.info("  저장 완료: 총 %d건 → %s", len(combined), output_path)
-        else:
-            logger.info("  신규 공고 없음 — 파일 유지")
-        return new_only
-    else:
-        new_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-        logger.info("  최초 저장: %d건 → %s", len(new_df), output_path)
-        return new_df
-
-
-# ════════════════════════════════════════════════════════════════
-# 메인 파이프라인
-# ════════════════════════════════════════════════════════════════
-
-def run_pipeline(input_path: str, output_path: str) -> pd.DataFrame:
-    """
-    전체 정제 파이프라인 실행.
-    반환값: 최종 정제된 DataFrame
-    """
+def _refine(df: pd.DataFrame, source_label: str, threshold: int) -> pd.DataFrame:
+    """DataFrame을 받아 정제 후 반환 (저장은 호출자가 담당)"""
     logger.info("=" * 60)
-    logger.info("파이프라인 시작")
-    logger.info("  입력: %s", input_path)
-    logger.info("  출력: %s", output_path)
+    logger.info("파이프라인 시작  (%s, %d건)", source_label, len(df))
     logger.info("=" * 60)
 
-    # ── 로드 ────────────────────────────────────────────────────
-    df = pd.read_csv(input_path, encoding="utf-8-sig")
-    logger.info("[1/6] 로드 완료: %d건", len(df))
-
-    # ── uid 생성 ─────────────────────────────────────────────────
     df = add_uid_column(df)
-    logger.info("[2/6] uid 생성 완료: %d건", len(df))
+    logger.info("[1] uid 생성 완료")
 
-    # ── Fuzzy 중복 제거 ──────────────────────────────────────────
-    logger.info("[3/6] 중복 제거 시작...")
-    df = fuzzy_deduplicate(df, threshold=FUZZY_THRESHOLD)
-    logger.info("[3/6] 중복 제거 완료: %d건", len(df))
+    stats = snapshot_stats(df, source_label)
+    save_stats(stats)
+    logger.info("[2] 통계 스냅샷 저장")
 
-    # ── 경력 수치화 ──────────────────────────────────────────────
+    df = fuzzy_deduplicate(df, threshold)
+    stats["total_after_dedup"] = len(df)
+    stats["removed_by_dedup"]  = stats["total_raw"] - len(df)
+    save_stats(stats)
+    logger.info("[3] 중복 제거 완료: %d건", len(df))
+
     df = add_experience_columns(df)
-    filled = df["min_exp"].notna().sum()
-    logger.info("[4/6] 경력 수치화 완료: %d건 파싱 성공 / %d건 미파싱", filled, len(df) - filled)
+    filled = int(df["min_exp"].notna().sum())
+    logger.info("[4] 경력 수치화: %d건 파싱 성공", filled)
 
-    # ── 기술 스택 추출 ───────────────────────────────────────────
     df = add_tech_stack_column(df)
-    has_stack = (df["tech_stack"].map(len) > 0).sum()
-    logger.info("[5/6] 기술 스택 추출 완료: %d건에서 키워드 발견", has_stack)
+    has_stack = int((df["tech_stack"].map(len) > 0).sum())
+    logger.info("[5] 기술 스택 추출: %d건에서 키워드 발견", has_stack)
 
-    # ── 검색용 텍스트 전처리 ─────────────────────────────────────
     df["_search_text"] = df.apply(build_search_text, axis=1)
-    logger.info("[6/6] 검색 텍스트 전처리 완료: %d건", len(df))
-
-    # ── 증분 저장 ────────────────────────────────────────────────
-    new_records = incremental_save(df, output_path)
-
-    logger.info("=" * 60)
-    logger.info("파이프라인 완료 — 최종 %d건 / 신규 %d건", len(df), len(new_records))
-    logger.info("=" * 60)
+    logger.info("[6] 검색 텍스트 전처리 완료")
 
     return df
+
+
+# ════════════════════════════════════════════════════════════════
+# 진입점 1: main.py에서 raw 공고 리스트를 직접 전달
+# ════════════════════════════════════════════════════════════════
+
+def run_pipeline_from_jobs(jobs: List[Dict], threshold: int = FUZZY_THRESHOLD) -> None:
+    """
+    수집된 raw 공고 리스트를 받아 정제 후 DB에 저장.
+    main.py에서 CSV 없이 직접 호출.
+    """
+    from utils import _jobs_to_dataframe
+    from database import init_db, upsert_jobs
+
+    df = _jobs_to_dataframe(jobs)
+    df = _refine(df, source_label="main.py 직접 수집", threshold=threshold)
+
+    init_db()
+    inserted, updated = upsert_jobs(df)
+
+    logger.info("=" * 60)
+    logger.info("파이프라인 완료 — DB 신규 %d건 / 갱신 %d건", inserted, updated)
+    logger.info("=" * 60)
+
+
+# ════════════════════════════════════════════════════════════════
+# 진입점 2: CSV 파일을 입력으로 받아 처리 (CLI 또는 레거시)
+# ════════════════════════════════════════════════════════════════
+
+def run_pipeline_from_csv(input_path: str, threshold: int = FUZZY_THRESHOLD) -> None:
+    """CSV 파일을 읽어 정제 후 DB에 저장."""
+    from database import init_db, upsert_jobs
+
+    df = pd.read_csv(input_path, encoding="utf-8-sig")
+    logger.info("CSV 로드 완료: %d건 (%s)", len(df), input_path)
+
+    df = _refine(df, source_label=os.path.basename(input_path), threshold=threshold)
+
+    init_db()
+    inserted, updated = upsert_jobs(df)
+
+    logger.info("=" * 60)
+    logger.info("파이프라인 완료 — DB 신규 %d건 / 갱신 %d건", inserted, updated)
+    logger.info("=" * 60)
 
 
 def get_latest_csv(directory: str = OUTPUT_DIR) -> Optional[str]:
-    """output/ 폴더에서 가장 최신 원본 CSV 반환 (cleaned 제외)"""
     files = sorted(
-        [f for f in glob.glob(os.path.join(directory, "it_security_jobs_*.csv"))],
+        glob.glob(os.path.join(directory, "it_security_jobs_*.csv")),
         reverse=True,
     )
     return files[0] if files else None
@@ -368,11 +328,6 @@ if __name__ == "__main__":
         help="입력 CSV 경로 (기본: output/ 폴더의 최신 it_security_jobs_*.csv)",
     )
     parser.add_argument(
-        "--output", "-o",
-        default=CLEANED_FILE,
-        help=f"출력 CSV 경로 (기본: {CLEANED_FILE})",
-    )
-    parser.add_argument(
         "--threshold", "-t",
         type=int,
         default=FUZZY_THRESHOLD,
@@ -382,7 +337,7 @@ if __name__ == "__main__":
 
     input_path = args.input or get_latest_csv()
     if not input_path:
-        logger.error("입력 파일을 찾을 수 없습니다. --input 옵션으로 경로를 지정하세요.")
+        logger.error("입력 CSV 파일을 찾을 수 없습니다. --input 옵션으로 경로를 지정하세요.")
         raise SystemExit(1)
 
-    run_pipeline(input_path, args.output)
+    run_pipeline_from_csv(input_path, threshold=args.threshold)

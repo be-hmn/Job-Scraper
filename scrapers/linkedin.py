@@ -9,7 +9,7 @@ from typing import List, Dict
 
 from bs4 import BeautifulSoup
 
-from config import MAX_PAGES
+from config import MAX_PAGES, is_it_job
 from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,8 @@ class LinkedInScraper(BaseScraper):
                     url     = link_tag["href"].split("?")[0] if link_tag and link_tag.has_attr("href") else ""
 
                     if title:
+                        if not is_it_job(title):
+                            continue
                         jobs.append(self._make_job(
                             title=title, company=company, location=loc,
                             experience="", deadline=deadline,

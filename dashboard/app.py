@@ -3,11 +3,15 @@ IT/보안 채용 공고 대시보드
 실행: python -m streamlit run dashboard/app.py
 """
 
+import ast
 import os
 import sys
+from collections import Counter
+from typing import Optional
+
 import pandas as pd
-import streamlit as st
 import plotly.express as px
+import streamlit as st
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -51,7 +55,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── NaN 정규화 헬퍼 ──────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════
+# 헬퍼 함수
+# ════════════════════════════════════════════════════════════════
+
 def _clean(val) -> str:
     import math
     if val is None:
@@ -62,10 +69,34 @@ def _clean(val) -> str:
     return "" if s.lower() == "nan" else s
 
 
-# ── 공고 카드 렌더링 ─────────────────────────────────────────────
+def _load_from_db() -> Optional[pd.DataFrame]:
+    db_path = os.path.join(ROOT, "output", "job_database.db")
+    if not os.path.exists(db_path):
+        return None
+    try:
+        from database import query_jobs
+        df = query_jobs(db_path=db_path)
+        df = df.rename(columns={
+            "title":    "공고제목",
+            "company":  "회사명",
+            "location": "근무지",
+            "deadline": "마감일",
+            "link":     "공고URL",
+            "source":   "출처",
+            "keyword":  "검색키워드",
+        })
+        if "경력" not in df.columns:
+            df["경력"] = ""
+        return df
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("DB 로드 실패: %s", e)
+        return None
+
+
 def render_job_cards(df: pd.DataFrame, show_score: bool = False):
     if df.empty:
-        st.info("조건에 맞는 공고가 없습니다. 필터를 완화해보세요.")
+        st.info("조건에 맞는 공고가 없습니다. 필터를 조정해보세요.")
         return
 
     for _, row in df.iterrows():
@@ -77,10 +108,8 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
         deadline = _clean(row.get("마감일", ""))
         url      = _clean(row.get("공고URL", ""))
 
-        # 기술 스택 배지 (파이프라인 처리 후)
         tech_list = row.get("tech_stack", [])
         if isinstance(tech_list, str):
-            import ast
             try:
                 tech_list = ast.literal_eval(tech_list)
             except Exception:
@@ -107,7 +136,7 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
                 f'</div>'
             )
 
-        card = (
+        st.markdown(
             '<div class="job-card">'
             f'<div class="job-title">{title}</div>'
             f'<div class="job-company">🏢 {company}</div>'
@@ -120,133 +149,138 @@ def render_job_cards(df: pd.DataFrame, show_score: bool = False):
             f'{tech_badges}'
             f'{score_part}'
             f'<div style="margin-top:8px">{link_part}</div>'
-            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
-        st.markdown(card, unsafe_allow_html=True)
 
 
-# ── 데이터 로드 (캐시) ───────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════
+# 데이터 로드 (캐시)
+# ════════════════════════════════════════════════════════════════
+
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
     return load_csv(path)
 
 
 @st.cache_resource
-def get_engine(path: str, embedder_type: str) -> JobSearchEngine:
-    df = load_data(path)
+def get_engine(path: str, embedder_type: str, _df: Optional[pd.DataFrame] = None) -> JobSearchEngine:
+    df = _df if path == "__db__" and _df is not None else load_data(path)
     return JobSearchEngine(df, embedder_type=embedder_type)
 
 
-# ── 사이드바 ─────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════
+# 사이드바 — 데이터 소스 + 임베딩 방식만
+# ════════════════════════════════════════════════════════════════
+
 with st.sidebar:
     st.title("🔐 채용 대시보드")
     st.divider()
 
-    # CSV 파일 선택
-    csv_files = list_csv_files(os.path.join(ROOT, "output"))
-    if not csv_files:
-        st.error("output/ 폴더에 CSV 파일이 없습니다.\n먼저 `python main.py`를 실행하세요.")
-        st.stop()
+    # 데이터 소스
+    db_df  = _load_from_db()
+    has_db = db_df is not None and not db_df.empty
 
-    selected_file = st.selectbox(
-        "📂 데이터 파일",
-        csv_files,
-        format_func=lambda x: os.path.basename(x),
-    )
-
-    # 파이프라인 처리 여부 표시
-    df_raw = load_data(selected_file)
-    is_cleaned = "uid" in df_raw.columns
-    if is_cleaned:
-        st.success("✅ 파이프라인 처리 완료 (Fuzzy 중복제거 · 기술스택 추출)", icon="🧹")
+    if has_db:
+        df_raw        = db_df
+        selected_file = "__db__"
+        st.success(f"🗄️ DB: {len(df_raw):,}건")
+        is_cleaned = True
     else:
-        st.info("💡 `python pipeline.py` 실행 시 Fuzzy 중복제거 및 기술스택 추출이 적용됩니다.", icon="ℹ️")
+        st.warning("DB 없음. `python main.py` 실행 필요", icon="⚠️")
+        csv_files = list_csv_files(os.path.join(ROOT, "output"))
+        if not csv_files:
+            st.error("데이터가 없습니다.")
+            st.stop()
+        selected_file = st.selectbox(
+            "📂 CSV 파일",
+            csv_files,
+            format_func=lambda x: os.path.basename(x),
+        )
+        df_raw     = load_data(selected_file)
+        is_cleaned = "uid" in df_raw.columns
 
     st.divider()
 
-    # 검색 엔진 선택
-    st.markdown("**🧠 검색 엔진**")
+    # 임베딩 방식
+    st.markdown("**🧠 임베딩 방식**")
     embedder_type = st.radio(
-        "임베딩 방식",
+        "임베딩",
         ["tfidf", "local", "bedrock", "openai"],
-        captions=[
-            "빠름 · 설치 불필요 (기본)",
-            "다국어 로컬 모델 (~120MB)",
-            "AWS Bedrock Titan",
-            "OpenAI text-embedding-3",
-        ],
+        captions=["빠름 · 기본", "다국어 로컬", "AWS Bedrock", "OpenAI"],
         label_visibility="collapsed",
     )
-    if embedder_type in ("bedrock", "openai"):
-        st.info("`.env`에 API 키를 설정하세요.", icon="ℹ️")
+    if embedder_type == "local":
+        st.info("`pip install sentence-transformers`", icon="ℹ️")
+    elif embedder_type == "bedrock":
+        st.info("AWS 자격증명 필요", icon="ℹ️")
+    elif embedder_type == "openai":
+        st.info("`OPENAI_API_KEY` 필요", icon="ℹ️")
 
     st.divider()
 
-    # 필터
-    st.markdown("**🔍 필터**")
-
-    sources = st.multiselect(
-        "출처 사이트",
-        sorted(df_raw["출처"].dropna().unique()),
-        default=[],
-    )
-
-    locations_all = (
-        df_raw["근무지"].fillna("")
-        .str.split(r"[,\s]+")
-        .explode()
-        .str.strip()
-        .loc[lambda s: s.str.len() > 0]
-        .value_counts()
-        .head(20)
-        .index.tolist()
-    )
-    locations = st.multiselect("근무지", locations_all, default=[])
-
-    experience = st.selectbox(
-        "경력",
-        ["전체", "신입", "1~3년", "3~5년", "5년 이상"],
-    )
-
-    # 기술 스택 필터 (파이프라인 처리 후에만 표시)
-    tech_filter = []
-    if is_cleaned and "tech_stack" in df_raw.columns:
-        from collections import Counter
-        import ast as _ast
-        all_techs: Counter = Counter()
-        df_raw["tech_stack"].dropna().apply(
-            lambda x: all_techs.update(
-                _ast.literal_eval(x) if isinstance(x, str) else x
-            ) if x else None
-        )
-        top_techs = [t for t, _ in all_techs.most_common(30)]
-        if top_techs:
-            tech_filter = st.multiselect("🛠 기술 스택", top_techs, default=[])
-
-    st.divider()
-    top_k = st.slider("최대 결과 수", 5, 100, 20, 5)
+    # LLM 상태 표시
+    st.markdown("**🤖 쿼리 확장 LLM**")
+    if os.getenv("GEMINI_API_KEY"):
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        st.success(f"Gemini ({model})", icon="✅")
+    elif os.getenv("OPENAI_API_KEY"):
+        st.success("OpenAI GPT", icon="✅")
+    elif os.getenv("AWS_ACCESS_KEY_ID"):
+        st.success("AWS Bedrock", icon="✅")
+    else:
+        st.warning("규칙 기반 폴백\n`.env`에 `GEMINI_API_KEY` 설정 권장", icon="⚠️")
 
 
-# ── 엔진 & 통계 ──────────────────────────────────────────────────
-engine = get_engine(selected_file, embedder_type)
-stats  = engine.stats()
+# ════════════════════════════════════════════════════════════════
+# 엔진 초기화
+# ════════════════════════════════════════════════════════════════
 
+if selected_file == "__db__":
+    engine = get_engine("__db__", embedder_type, _df=df_raw)
+else:
+    engine = get_engine(selected_file, embedder_type)
 
-# ── 탭 ───────────────────────────────────────────────────────────
-tab_search, tab_filter, tab_stats = st.tabs(
-    ["🤖 자연어 검색", "🔎 필터 검색", "📊 통계"]
+stats = engine.stats()
+
+# 필터 옵션 사전 계산
+_sources_all = sorted(df_raw["출처"].dropna().unique())
+_locations_all = (
+    df_raw["근무지"].fillna("")
+    .str.split(r"[,\s]+")
+    .explode()
+    .str.strip()
+    .loc[lambda s: s.str.len() > 0]
+    .value_counts()
+    .head(20)
+    .index.tolist()
 )
-
-
-# ════════════════════════════════════════════════════════════════
-# 탭 1: 자연어 검색
-# ════════════════════════════════════════════════════════════════
-with tab_search:
-    st.markdown("### 🤖 자연어로 채용 공고 찾기")
-    st.caption(
-        "원하는 경험이나 관심사를 자유롭게 입력하세요.  "
-        "예: *정보보안 관련 최신 문제를 해결해보는 경험을 해보고 싶어*"
+_top_techs = []
+if is_cleaned and "tech_stack" in df_raw.columns:
+    _all_techs: Counter = Counter()
+    df_raw["tech_stack"].dropna().apply(
+        lambda x: _all_techs.update(
+            ast.literal_eval(x) if isinstance(x, str) else x
+        ) if x else None
     )
+    _top_techs = [t for t, _ in _all_techs.most_common(30)]
+
+
+# ════════════════════════════════════════════════════════════════
+# 탭
+# ════════════════════════════════════════════════════════════════
+
+tab_search, tab_stats = st.tabs(["🔍 검색", "📊 통계"])
+
+
+# ════════════════════════════════════════════════════════════════
+# 탭 1: 검색 (자연어 + 필터 한 화면)
+# ════════════════════════════════════════════════════════════════
+
+with tab_search:
+
+    # ── 검색창 ──────────────────────────────────────────────────
+    st.markdown("### 원하는 포지션을 자유롭게 입력하세요")
 
     EXAMPLES = [
         "정보보안 관련 최신 문제를 해결해보는 경험을 해보고 싶어",
@@ -256,14 +290,12 @@ with tab_search:
         "모의해킹이나 취약점 분석 업무를 해보고 싶어",
     ]
 
-    st.markdown("**💡 예시 쿼리**")
     ex_cols = st.columns(len(EXAMPLES))
-
     if "query_text" not in st.session_state:
         st.session_state.query_text = ""
 
     for i, ex in enumerate(EXAMPLES):
-        if ex_cols[i].button(ex[:16] + "…", key=f"ex_{i}", use_container_width=True):
+        if ex_cols[i].button(ex[:14] + "…", key=f"ex_{i}", use_container_width=True):
             st.session_state.query_text = ex
             st.rerun()
 
@@ -271,72 +303,86 @@ with tab_search:
         "검색 쿼리",
         value=st.session_state.query_text,
         height=80,
-        placeholder="원하는 업무 경험, 기술 스택, 관심 분야를 자유롭게 입력하세요...",
+        placeholder="예: 정보보안 관련 경험을 쌓고 싶어 / 신입 백엔드 개발자로 시작하고 싶어",
         label_visibility="collapsed",
     )
 
-    use_filter = st.checkbox(
-        "사이드바 필터와 함께 사용 (하이브리드 검색)", value=True
-    )
+    # ── 필터 (메인 화면) ─────────────────────────────────────────
+    with st.expander("🔍 필터 설정", expanded=False):
+        fc1, fc2, fc3 = st.columns(3)
 
-    if st.button("🔍 검색", type="primary", use_container_width=True, key="semantic_btn"):
+        with fc1:
+            sources = st.multiselect(
+                "출처 사이트",
+                _sources_all,
+                default=[],
+                key="f_sources",
+            )
+            experience = st.selectbox(
+                "경력",
+                ["전체", "신입 (경력무관 포함)", "1~3년", "3~5년", "5년 이상"],
+                key="f_exp",
+            )
+            intern_only = st.checkbox("인턴 공고만 보기", key="f_intern")
+
+        with fc2:
+            locations = st.multiselect(
+                "근무지",
+                _locations_all,
+                default=[],
+                key="f_loc",
+            )
+
+        with fc3:
+            tech_filter = []
+            if _top_techs:
+                tech_filter = st.multiselect(
+                    "🛠 기술 스택",
+                    _top_techs,
+                    default=[],
+                    key="f_tech",
+                )
+
+    # 경력 필터 값 정규화 (UI 표시명 → 내부 값)
+    _exp_map = {
+        "전체": "전체",
+        "신입 (경력무관 포함)": "신입",
+        "1~3년": "1~3년",
+        "3~5년": "3~5년",
+        "5년 이상": "5년 이상",
+    }
+    experience_val = _exp_map.get(experience, "전체")
+
+    # ── 검색 버튼 ────────────────────────────────────────────────
+    if st.button("🔍 검색", type="primary", use_container_width=True, key="search_btn"):
         if not query.strip():
             st.warning("검색어를 입력해주세요.")
         else:
-            with st.spinner("유사한 공고를 찾는 중..."):
-                if use_filter:
-                    results = engine.hybrid_search(
-                        query=query,
-                        sources=sources if sources else None,
-                        locations=locations if locations else None,
-                        experience=experience,
-                        tech_stack=tech_filter if tech_filter else None,
-                        top_k=top_k,
-                    )
-                else:
-                    results = engine.semantic_search(query, top_k=top_k)
+            with st.spinner("검색 중..."):
+                results, params = engine.expanded_search(
+                    query=query,
+                    sources=sources if sources else None,
+                    locations=locations if locations else None,
+                    experience=experience_val,
+                    tech_stack=tech_filter if tech_filter else None,
+                    intern_only=intern_only,
+                )
+
+            # LLM 확장 정보 표시
+            provider = params.get("provider", "rules")
+            summary  = params.get("summary", "")
+            with st.expander(f"🤖 검색 의도 분석 — {summary}", expanded=False):
+                st.markdown(f"**확장 쿼리:** `{params.get('search_query', '')[:120]}`")
+                st.caption(f"제공: {provider}")
 
             st.success(f"**{len(results)}개** 공고를 찾았습니다.")
             render_job_cards(results, show_score=True)
 
 
 # ════════════════════════════════════════════════════════════════
-# 탭 2: 필터 검색
+# 탭 2: 통계
 # ════════════════════════════════════════════════════════════════
-with tab_filter:
-    st.markdown("### 🔎 조건으로 공고 찾기")
 
-    kw = st.text_input(
-        "키워드 검색",
-        placeholder="예: 보안, DevOps, 토스, 서울...",
-        key="filter_kw",
-    )
-
-    if st.button("검색", type="primary", key="filter_btn", use_container_width=True):
-        results_f = engine.filter_search(
-            keyword=kw,
-            sources=sources if sources else None,
-            locations=locations if locations else None,
-            experience=experience,
-            tech_stack=tech_filter if tech_filter else None,
-        )
-        st.success(f"**{len(results_f)}개** 공고를 찾았습니다.")
-        render_job_cards(results_f.head(top_k), show_score=False)
-    else:
-        default_f = engine.filter_search(
-            keyword=kw,
-            sources=sources if sources else None,
-            locations=locations if locations else None,
-            experience=experience,
-            tech_stack=tech_filter if tech_filter else None,
-        )
-        st.caption(f"전체 {len(default_f)}개 공고 (최대 {top_k}개 표시)")
-        render_job_cards(default_f.head(top_k), show_score=False)
-
-
-# ════════════════════════════════════════════════════════════════
-# 탭 3: 통계
-# ════════════════════════════════════════════════════════════════
 with tab_stats:
     st.markdown("### 📊 수집 데이터 통계")
 
@@ -362,6 +408,16 @@ with tab_stats:
         fig1.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig1, use_container_width=True)
 
+        direct_sources = {"카카오", "네이버", "토스", "쿠팡"}
+        raw = stats.get("by_source_raw", {})
+        direct_detail = {k: v for k, v in raw.items() if k in direct_sources}
+        if direct_detail:
+            with st.expander("개별 공고 세부 내역"):
+                detail_df = pd.DataFrame(
+                    direct_detail.items(), columns=["기업", "건수"]
+                ).sort_values("건수", ascending=False)
+                st.dataframe(detail_df, hide_index=True, use_container_width=True)
+
     with col2:
         st.markdown("**검색 키워드별 공고 수**")
         kw_df = pd.DataFrame(
@@ -375,7 +431,6 @@ with tab_stats:
         fig2.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig2, use_container_width=True)
 
-    # 기술 스택 TOP 15 (파이프라인 처리 후)
     if "top_tech" in stats and stats["top_tech"]:
         st.markdown("**🛠 기술 스택 TOP 15**")
         tech_df = pd.DataFrame(
@@ -402,10 +457,9 @@ with tab_stats:
         fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig3, use_container_width=True)
 
-    # 경력 분포 (파이프라인 처리 후)
     with col4:
         if "exp_dist" in stats and stats["exp_dist"]:
-            st.markdown("**💼 경력 분포 (min_exp 기준)**")
+            st.markdown("**💼 경력 분포**")
             exp_df = pd.DataFrame(
                 [(str(k) + "년", v) for k, v in sorted(stats["exp_dist"].items())
                  if k is not None and k >= 0],
@@ -423,12 +477,9 @@ with tab_stats:
     st.divider()
     st.markdown("**전체 데이터 테이블**")
     display_cols = [c for c in df_raw.columns if c not in ("_search_text", "uid")]
-    display_df = df_raw[display_cols]
     st.dataframe(
-        display_df,
+        df_raw[display_cols],
         use_container_width=True,
-        column_config={
-            "공고URL": st.column_config.LinkColumn("공고URL"),
-        },
+        column_config={"공고URL": st.column_config.LinkColumn("공고URL")},
         hide_index=True,
     )

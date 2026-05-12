@@ -76,6 +76,28 @@ def deduplicate(jobs: List[Dict]) -> List[Dict]:
     return unique
 
 
+def _jobs_to_dataframe(jobs: List[Dict]) -> pd.DataFrame:
+    """
+    스크래퍼가 반환한 raw 공고 리스트를 DataFrame으로 변환.
+    컬럼명을 한글로 매핑한다.
+    """
+    df = pd.DataFrame(jobs, columns=[
+        "title", "company", "location", "experience",
+        "deadline", "url", "source", "keyword",
+    ])
+    df.rename(columns={
+        "title":      "공고제목",
+        "company":    "회사명",
+        "location":   "근무지",
+        "experience": "경력",
+        "deadline":   "마감일",
+        "url":        "공고URL",
+        "source":     "출처",
+        "keyword":    "검색키워드",
+    }, inplace=True)
+    return df
+
+
 def save_csv(jobs: List[Dict], filename: str = None) -> str:
     """
     채용 공고 목록을 CSV로 저장하고 파일 경로를 반환한다.

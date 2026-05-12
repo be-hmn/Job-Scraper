@@ -15,6 +15,7 @@ from config import (
     SARAMIN_API_URL,
     IT_SECURITY_KEYWORDS,
     MAX_PAGES,
+    is_it_job,
 )
 from scrapers.base import BaseScraper
 
@@ -127,6 +128,8 @@ class SaraminScraper(BaseScraper):
                     url  = f"https://www.saramin.co.kr{href}" if href.startswith("/") else href
 
                     if title:
+                        if not is_it_job(title):
+                            continue
                         jobs.append(self._make_job(
                             title=title, company=company, location=loc,
                             experience=exp, deadline=deadline,

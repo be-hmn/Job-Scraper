@@ -15,17 +15,19 @@ from typing import List, Dict
 
 sys.path.insert(0, ".")
 
-from scrapers.saramin     import SaraminScraper
-from scrapers.jobkorea   import JobKoreaScraper
-from scrapers.wanted     import WantedScraper
-from scrapers.jumpit     import JumpitScraper
-from scrapers.linkedin   import LinkedInScraper
-from scrapers.jobplanet  import JobplanetScraper
-from scrapers.kakao      import KakaoScraper
-from scrapers.naver      import NaverScraper
-from scrapers.toss       import TossScraper
-from scrapers.coupang    import CoupangScraper
-from scrapers.rallit     import RallitScraper
+from scrapers.saramin          import SaraminScraper
+from scrapers.wanted           import WantedScraper
+from scrapers.jumpit           import JumpitScraper
+from scrapers.linkedin         import LinkedInScraper
+from scrapers.naver            import NaverScraper
+from scrapers.coupang          import CoupangScraper
+from scrapers.selenium_scrapers import (
+    JobKoreaScraper,
+    JobplanetScraper,
+    KakaoScraper,
+    TossScraper,
+    RallitScraper,
+)
 from scrapers.selenium_base import _find_chrome
 
 logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
