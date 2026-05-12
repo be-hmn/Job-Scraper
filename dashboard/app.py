@@ -401,15 +401,33 @@ with tab_search:
         "모의해킹이나 취약점 분석 업무를 해보고 싶어",
     ]
 
-    ex_cols = st.columns(len(EXAMPLES))
+    # ── 세션 상태 초기화 ─────────────────────────────────────
     if "query_text" not in st.session_state:
         st.session_state.query_text = ""
+    if "first_visit" not in st.session_state:
+        st.session_state.first_visit = True
+    if "example_clicked" not in st.session_state:
+        st.session_state.example_clicked = False
 
+    # ── 첫 방문자 가이드 ─────────────────────────────────────
+    if st.session_state.first_visit and not st.session_state.query_text:
+        st.info(
+            "💡 **예시 중 하나를 선택하거나, 직접 입력 후 검색 버튼을 눌러주세요!**\n\n"
+            "예: \"정보보안 경험을 쌓고 싶어\", \"신입 백엔드 개발자\", \"DevOps 엔지니어\"",
+            icon="ℹ️"
+        )
+
+    # ── 예시 쿼리 버튼 ──────────────────────────────────────
+    st.markdown("**예시 선택:**")
+    ex_cols = st.columns(len(EXAMPLES))
     for i, ex in enumerate(EXAMPLES):
         if ex_cols[i].button(ex[:14] + "…", key=f"ex_{i}", use_container_width=True):
             st.session_state.query_text = ex
+            st.session_state.first_visit = False  # 예시 선택 시 첫 방문 상태 해제
+            st.session_state.example_clicked = True
             st.rerun()
 
+    # ── 검색창 ──────────────────────────────────────────────
     query = st.text_area(
         "검색 쿼리",
         value=st.session_state.query_text,
@@ -417,6 +435,10 @@ with tab_search:
         placeholder="예: 정보보안 관련 경험을 쌓고 싶어 / 신입 백엔드 개발자로 시작하고 싶어",
         label_visibility="collapsed",
     )
+
+    # 검색창에 직접 입력하면 첫 방문 상태 해제 (자동 검색 아님)
+    if query and query != st.session_state.query_text:
+        st.session_state.first_visit = False
 
     # ── 필터 (메인 화면) ─────────────────────────────────────────
     with st.expander("🔍 필터 설정", expanded=False):
@@ -465,7 +487,21 @@ with tab_search:
     experience_val = _exp_map.get(experience, "전체")
 
     # ── 검색 버튼 ────────────────────────────────────────────────
-    if st.button("🔍 검색", type="primary", use_container_width=True, key="search_btn"):
+    col_btn = st.columns([1, 5])
+    with col_btn[0]:
+        search_clicked = st.button(
+            "🔍 검색",
+            type="primary",
+            use_container_width=True,
+            key="search_btn"
+        )
+
+    with col_btn[1]:
+        if st.session_state.first_visit and st.session_state.query_text:
+            st.caption("👆 여기를 클릭하여 검색 결과를 확인하세요!")
+
+    # ── 검색 실행 ────────────────────────────────────────────────
+    if search_clicked:
         if not query.strip():
             st.warning("검색어를 입력해주세요.")
         else:
@@ -479,6 +515,9 @@ with tab_search:
                     intern_only=intern_only,
                 )
 
+            # 검색 후 첫 방문 상태 완전히 해제
+            st.session_state.first_visit = False
+
             # LLM 확장 정보 표시
             provider = params.get("provider", "rules")
             summary  = params.get("summary", "")
@@ -488,7 +527,6 @@ with tab_search:
 
             st.success(f"**{len(results)}개** 공고를 찾았습니다.")
             render_job_cards(results, show_score=True)
-
 
 # ════════════════════════════════════════════════════════════════
 # 탭 2: 통계
