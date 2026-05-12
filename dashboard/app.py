@@ -486,21 +486,13 @@ with tab_search:
     }
     experience_val = _exp_map.get(experience, "전체")
 
-    # ── 검색 버튼 ────────────────────────────────────────────────
-    col_btn = st.columns([1, 4])
-    with col_btn[0]:
-        search_clicked = st.button(
-            "🔍 검색",
-            type="primary",
-            use_container_width=True,
-            key="search_btn"
-        )
-
-    with col_btn[1]:
-        if st.session_state.first_visit and st.session_state.query_text:
-            st.caption("👆 여기를 클릭하여 검색 결과를 확인하세요!")
-
-    # ── 검색 실행 또는 기본 데이터 표시 ────────────────────────────
+    # ── 검색 버튼 (전체 너비) ────────────────────────────────────
+    search_clicked = st.button(
+        "🔍 검색",
+        type="primary",
+        use_container_width=True,
+        key="search_btn"
+    )
     if search_clicked:
         if not query.strip():
             st.warning("검색어를 입력해주세요.")
