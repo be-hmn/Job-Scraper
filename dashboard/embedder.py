@@ -26,15 +26,15 @@ class BaseEmbedder:
 class TFIDFEmbedder(BaseEmbedder):
     def __init__(self):
         from sklearn.feature_extraction.text import TfidfVectorizer
-    # ⚠️ TF-IDF char n-gram은 의미론적 거리가 낮음 (0.2~0.5 범위)
-    # 더 정확한 검색을 원하면 .env에 EMBEDDER=local 설정하세요
-    self._vec = TfidfVectorizer(
-        analyzer="char_wb",   # 문자 n-gram → 한국어에 효과적
-        ngram_range=(2, 4),
-        max_features=20_000,
-        sublinear_tf=True,
-    )
-    self._matrix = None
+        # ⚠️ TF-IDF char n-gram은 의미론적 거리가 낮음 (0.2~0.5 범위)
+        # 더 정확한 검색을 원하면 .env에 EMBEDDER=local 설정하세요
+        self._vec = TfidfVectorizer(
+            analyzer="char_wb",   # 문자 n-gram → 한국어에 효과적
+            ngram_range=(2, 4),
+            max_features=20_000,
+            sublinear_tf=True,
+        )
+        self._matrix = None
 
     def fit(self, texts: List[str]) -> None:
         self._matrix = self._vec.fit_transform(texts)
