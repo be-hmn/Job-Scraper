@@ -486,8 +486,18 @@ with tab_search:
     }
     experience_val = _exp_map.get(experience, "전체")
 
+    # 경력 필터 값 정규화 (UI 표시명 → 내부 값)
+    _exp_map = {
+        "전체": "전체",
+        "신입 (경력무관 포함)": "신입",
+        "1~3년": "1~3년",
+        "3~5년": "3~5년",
+        "5년 이상": "5년 이상",
+    }
+    experience_val = _exp_map.get(experience, "전체")
+
     # ── 검색 버튼 ────────────────────────────────────────────────
-    col_btn = st.columns([1, 5])
+    col_btn = st.columns([1, 4])
     with col_btn[0]:
         search_clicked = st.button(
             "🔍 검색",
@@ -500,7 +510,7 @@ with tab_search:
         if st.session_state.first_visit and st.session_state.query_text:
             st.caption("👆 여기를 클릭하여 검색 결과를 확인하세요!")
 
-    # ── 검색 실행 ────────────────────────────────────────────────
+    # ── 검색 실행 또는 기본 데이터 표시 ────────────────────────────
     if search_clicked:
         if not query.strip():
             st.warning("검색어를 입력해주세요.")
@@ -527,6 +537,80 @@ with tab_search:
 
             st.success(f"**{len(results)}개** 공고를 찾았습니다.")
             render_job_cards(results, show_score=True)
+
+    else:
+        # ── 로드 시 기본 데이터 표시 (필터 및 정렬 적용) ─────────
+        st.divider()
+        st.markdown("### 📌 전체 공고 목록")
+
+        # 필터 적용
+        filtered_results = engine.filter_search(
+            sources=sources if sources else None,
+            locations=locations if locations else None,
+            experience=experience_val,
+            tech_stack=tech_filter if tech_filter    # 경력 필터 값 정규화 (UI 표시명 → 내부 값)
+        _exp_map = {
+            "전체": "전체",
+            "신입 (경력무관 포함)": "신입",
+            "1~3년": "1~3년",
+            "3~5년": "3~5년",
+            "5년 이상": "5년 이상",
+        }
+        experience_val = _exp_map.get(experience, "전체")
+
+        # ── 검색 버튼 ────────────────────────────────────────────────
+        col_btn = st.columns([1, 4])
+        with col_btn[0]:
+            search_clicked = st.button(
+                "🔍 검색",
+                type="primary",
+                use_container_width=True,
+                key="search_btn"
+            )
+
+        with col_btn[1]:
+            if st.session_state.first_visit and st.session_state.query_text:
+        st.caption("👆 여기를 클릭하여 검색 결과를 확인하세요!")
+
+        # ── 검색 실행 또는 기본 데이터 표시 ────────────────────────────
+        if search_clicked:
+            if not query.strip():
+        st.warning("검색어를 입력해주세요.")
+        else:
+        with st.spinner("검색 중..."):
+            results, params = engine.expanded_search(
+                query=query,
+                sources=sources if sources else None,
+                locations=locations if locations else None,
+                experience=experience_val,
+                tech_stack=tech_filter if tech_filter else None,
+                intern_only=intern_only,
+            )
+
+        # 검색 후 첫 방문 상태 완전히 해제
+        st.session_state.first_visit = False
+
+        # LLM 확장 정보 표시
+        provider = params.get("provider", "rules")
+        summary  = params.get("summary", "")
+        with st.expander(f"🤖 검색 의도 분석 — {summary}", expanded=False):
+            st.markdown(f"**확장 쿼리:** `{params.get('search_query', '')[:120]}`")
+        st.caption(f"제공: {provider}")
+
+        st.success(f"**{len(results)}개** 공고를 찾았습니다.")
+        render_job_cards(results, show_score=True)
+
+        else:
+        # ── 로드 시 기본 데이터 표시 (필터 및 정렬 적용) ─────────
+        st.divider()
+        st.markdown("### 📌 전체 공고 목록")
+
+        # 필터 적용
+        filtered_results = engine.filter_search(
+            sources=sources if sources else None,
+            locations=locations if locations else None,
+            experience=experience_val,
+            tech_stack=tech_filter if tech_filter
 
 # ════════════════════════════════════════════════════════════════
 # 탭 2: 통계
